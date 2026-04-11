@@ -6,6 +6,25 @@
 
 Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via Modbus TCP.
 
+## Table of contents
+
+- [Features](#features)
+- [Hardware Requirements](#hardware-requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Entities](#entities)
+  - [Sensors](#sensors)
+  - [Binary sensors](#binary-sensors)
+  - [Switches](#switches)
+  - [Number entities](#number-entities)
+  - [Climate](#climate)
+- [COP calculation](#cop-calculation)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [RS-485 adapter installation](#rs-485-adapter-installation)
+- [License](#license)
+
 Built by reverse-engineering the Modbus protocol using passive bus sniffing and systematic register scanning. The register map was validated over multiple overnight monitoring sessions totalling 850 000+ readings.
 
 ## Features
@@ -15,7 +34,7 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 - **1 binary sensor:** compressor running
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
 - **7 number entities:** heating target temperature and 6 heating curve (stooklijn) parameters
-- **30-second polling interval** via Modbus TCP
+- **5-second polling interval** via Modbus TCP
 
 ## Hardware Requirements
 

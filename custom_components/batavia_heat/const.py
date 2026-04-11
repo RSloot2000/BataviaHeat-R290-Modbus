@@ -13,7 +13,7 @@ CONF_TCP_PORT = "tcp_port"
 CONF_SLAVE_ID = "slave_id"
 
 # Update interval in seconds
-DEFAULT_SCAN_INTERVAL = 30
+DEFAULT_SCAN_INTERVAL = 5
 
 # Special marker values for disconnected sensors
 SENSOR_DISCONNECTED = (32834, 32836)  # 0x8042, 0x8044 → -3270.x°C
