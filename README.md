@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-> **🚧 This project is in early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
+> **🚧 This project is in extremely early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
 
 Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via Modbus TCP.
 
@@ -154,6 +154,12 @@ template:
 ### Sensors show 0
 - HR[768], HR[773] and HR[776] return 0 when the compressor is off; this is expected
 - If input register sensors show 0, verify your gateway connection is stable
+
+## Documentation
+
+The [`docs/`](docs/) folder contains reference documentation for the BataviaHeat R290:
+
+- **[tablet-parameters.md](docs/tablet-parameters.md)** - Complete list of all installer parameters (N/M/F/P/G series) with HR-addresses, ranges, default values, error codes (E/F series), and optimization tips
 
 ## Contributing
 
