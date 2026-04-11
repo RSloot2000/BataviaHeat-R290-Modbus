@@ -4,7 +4,7 @@
 
 > **🚧 This project is in extremely early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
 
-Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via Modbus TCP.
+Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via Modbus TCP or RTU (Serial).
 
 ## Table of contents
 
@@ -34,15 +34,19 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 - **1 binary sensor:** compressor running
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
 - **7 number entities:** heating target temperature and 6 heating curve (stooklijn) parameters
-- **5-second polling interval** via Modbus TCP
+- **5-second polling interval** via Modbus TCP or RTU (Serial)
+- **Dual connection support:** Modbus TCP (e.g. DR164 WiFi gateway) or Modbus RTU via USB RS-485 adapter
 
 ## Hardware Requirements
 
 | Component | Description |
 |-----------|-------------|
 | Heat pump | BataviaHeat R290 3–8 kW Monobloc |
-| Modbus gateway | DR164 RS485-to-WiFi converter (or any Modbus TCP gateway) |
-| Wiring | Gateway connected to the heat pump's RS-485 port (A+ to A+, B− to B−) |
+| Modbus gateway (TCP) | DR164 RS485-to-WiFi converter (or any Modbus TCP gateway) |
+| USB adapter (RTU) | Any USB RS-485 adapter (e.g. FTDI, CH340-based) |
+| Wiring | Gateway / adapter connected to the heat pump's RS-485 port (A+ to A+, B− to B−) |
+
+> **Choose one connection method:** Modbus TCP (wireless via gateway) **or** Modbus RTU (direct USB serial connection to your Home Assistant host).
 
 > **Important:** The RS-485 bus supports only one master. Disconnect the tablet controller from the bus before using this integration, or use the secondary RS-485 port located on the mainboard of the heatpump.
 
@@ -67,10 +71,21 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **BataviaHeat R290**
-3. Enter the connection details:
+3. Select your connection type: **Modbus TCP** or **Modbus RTU (Serial)**
+
+### Modbus TCP
+
+4. Enter the connection details:
    - **Host:** IP address of the Modbus TCP gateway
    - **TCP port:** Gateway TCP port (default: `502`)
    - **Slave ID:** Modbus device address (default: `1`)
+
+### Modbus RTU (Serial)
+
+4. Enter the connection details:
+   - **Serial port:** Device path (e.g. `/dev/ttyUSB0` on Linux, `COM3` on Windows)
+   - **Slave ID:** Modbus device address (default: `1`)
+   - **Baudrate:** Serial baudrate (default: `9600`, only change if needed)
 
 ## Entities
 
@@ -164,6 +179,12 @@ template:
 - Check that the IP address is correct and reachable from your Home Assistant instance
 - Confirm the TCP port (default 502) and slave ID (default 1)
 - Check RS-485 wiring
+
+### Cannot connect (serial)
+- Verify the USB RS-485 adapter is plugged in and detected by the OS
+- Check the serial port path (run `ls /dev/ttyUSB*` or `ls /dev/ttyACM*` on Linux)
+- On Home Assistant OS, the device may appear as `/dev/ttyUSB0` or `/dev/ttyACM0`
+- Make sure your Home Assistant user has permissions to access the serial port
 
 ### Entities unavailable
 - Check Home Assistant logs for Modbus communication errors

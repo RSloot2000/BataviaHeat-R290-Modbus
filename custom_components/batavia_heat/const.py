@@ -7,10 +7,17 @@ MODEL = "R290 3-8kW Monobloc"
 # === Connection defaults ===
 DEFAULT_TCP_PORT = 502
 DEFAULT_SLAVE_ID = 1
+DEFAULT_BAUDRATE = 9600
 
 CONF_HOST = "host"
 CONF_TCP_PORT = "tcp_port"
 CONF_SLAVE_ID = "slave_id"
+CONF_CONNECTION_TYPE = "connection_type"
+CONF_SERIAL_PORT = "serial_port"
+CONF_BAUDRATE = "baudrate"
+
+CONNECTION_TCP = "tcp"
+CONNECTION_SERIAL = "serial"
 
 # Update interval in seconds
 DEFAULT_SCAN_INTERVAL = 5

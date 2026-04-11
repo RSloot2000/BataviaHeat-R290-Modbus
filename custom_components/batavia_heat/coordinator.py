@@ -5,7 +5,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from pymodbus.client import ModbusTcpClient
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,9 +14,15 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     COILS,
+    CONF_BAUDRATE,
+    CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
     CONF_TCP_PORT,
+    CONNECTION_SERIAL,
+    CONNECTION_TCP,
+    DEFAULT_BAUDRATE,
     DEFAULT_SCAN_INTERVAL,
     DISCRETE_INPUTS,
     DOMAIN,
@@ -42,21 +48,39 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
         self.config_entry = entry
-        self._host = entry.data[CONF_HOST]
-        self._tcp_port = entry.data[CONF_TCP_PORT]
+        self._connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TCP)
         self._slave_id = entry.data[CONF_SLAVE_ID]
-        self._client: ModbusTcpClient | None = None
+        self._client: ModbusTcpClient | ModbusSerialClient | None = None
 
-    def _get_client(self) -> ModbusTcpClient:
+        if self._connection_type == CONNECTION_SERIAL:
+            self._serial_port = entry.data[CONF_SERIAL_PORT]
+            self._baudrate = entry.data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE)
+        else:
+            self._host = entry.data[CONF_HOST]
+            self._tcp_port = entry.data[CONF_TCP_PORT]
+
+    def _get_client(self) -> ModbusTcpClient | ModbusSerialClient:
         """Get or create the Modbus client."""
         if self._client is None or not self._client.connected:
-            self._client = ModbusTcpClient(
-                host=self._host,
-                port=self._tcp_port,
-                timeout=3,
-            )
-            if not self._client.connect():
-                raise ConnectionError(f"Cannot connect to {self._host}:{self._tcp_port}")
+            if self._connection_type == CONNECTION_SERIAL:
+                self._client = ModbusSerialClient(
+                    port=self._serial_port,
+                    baudrate=self._baudrate,
+                    stopbits=1,
+                    bytesize=8,
+                    parity="N",
+                    timeout=3,
+                )
+                if not self._client.connect():
+                    raise ConnectionError(f"Cannot open serial port {self._serial_port}")
+            else:
+                self._client = ModbusTcpClient(
+                    host=self._host,
+                    port=self._tcp_port,
+                    timeout=3,
+                )
+                if not self._client.connect():
+                    raise ConnectionError(f"Cannot connect to {self._host}:{self._tcp_port}")
         return self._client
 
     def _read_all_registers(self) -> dict[str, Any]:

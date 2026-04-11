@@ -3,16 +3,32 @@
     "step": {
       "user": {
         "title": "BataviaHeat R290 Connection",
-        "description": "Configure the Modbus TCP connection to your BataviaHeat R290 heat pump via DR164 RS485-to-WiFi converter.",
+        "description": "Select how your heat pump is connected.",
+        "data": {
+          "connection_type": "Connection type"
+        }
+      },
+      "tcp": {
+        "title": "Modbus TCP Connection",
+        "description": "Configure the TCP connection to your Modbus gateway (e.g. DR164 RS485-to-WiFi converter).",
         "data": {
           "host": "Host / IP address",
           "tcp_port": "TCP port",
           "slave_id": "Modbus slave ID"
         }
+      },
+      "serial": {
+        "title": "Modbus RTU (Serial) Connection",
+        "description": "Configure the serial connection to your USB RS-485 adapter.",
+        "data": {
+          "serial_port": "Serial port (e.g. /dev/ttyUSB0 or COM3)",
+          "slave_id": "Modbus slave ID",
+          "baudrate": "Baudrate (default: 9600)"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the heat pump. Check the host, port, and slave ID.",
+      "cannot_connect": "Failed to connect to the heat pump. Check your connection settings.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
