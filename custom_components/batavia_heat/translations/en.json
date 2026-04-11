@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BataviaHeat R290 Connection",
+        "description": "Configure the Modbus TCP connection to your BataviaHeat R290 heat pump via DR164 RS485-to-WiFi converter.",
+        "data": {
+          "host": "Host / IP address",
+          "tcp_port": "TCP port",
+          "slave_id": "Modbus slave ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the heat pump. Check the host, port, and slave ID.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ambient_temperature": { "name": "Ambient temperature" },
+      "fin_coil_temperature": { "name": "Fin coil temperature" },
+      "suction_temperature": { "name": "Suction temperature" },
+      "discharge_temperature": { "name": "Discharge temperature" },
+      "low_pressure": { "name": "Low pressure" },
+      "high_pressure": { "name": "High pressure" },
+      "pump_target_speed": { "name": "Pump target speed" },
+      "pump_flow_rate": { "name": "Pump flow rate" },
+      "pump_control_signal": { "name": "Pump control signal" },
+      "pump_feedback_signal": { "name": "Pump feedback signal" },
+      "plate_hx_inlet_temperature": { "name": "Plate HX inlet temperature" },
+      "plate_hx_outlet_temperature": { "name": "Plate HX outlet temperature" },
+      "module_water_outlet_temperature": { "name": "Module water outlet temperature" },
+      "module_ambient_temperature": { "name": "Module ambient temperature" },
+      "operational_status": { "name": "Operational status" },
+      "compressor_discharge_temperature": { "name": "Compressor discharge temperature" },
+      "water_outlet_temperature": { "name": "Water outlet temperature" },
+      "thermal_power": { "name": "Thermal power" },
+      "energy_delivered": { "name": "Energy delivered" }
+    },
+    "binary_sensor": {
+      "compressor_running": { "name": "Compressor running" }
+    },
+    "number": {
+      "heating_target_temperature": { "name": "Heating target temperature" },
+      "max_heating_temperature": { "name": "Max heating temperature" },
+      "heating_curve_mode": { "name": "Heating curve mode" },
+      "curve_outdoor_temp_high": { "name": "Curve outdoor temp high" },
+      "curve_outdoor_temp_low": { "name": "Curve outdoor temp low" },
+      "curve_water_temp_mild": { "name": "Curve water temp mild" },
+      "curve_water_temp_cold": { "name": "Curve water temp cold" }
+    },
+    "switch": {
+      "unit_power": { "name": "Unit power" },
+      "silent_mode": { "name": "Silent mode" },
+      "silent_level_2": { "name": "Silent level 2" }
+    },
+    "climate": {
+      "heat_pump": { "name": "Heat Pump" }
+    }
+  }
+}
