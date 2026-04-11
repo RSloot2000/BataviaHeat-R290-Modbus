@@ -4,104 +4,104 @@
 
 ## N-serie: Systeemconfiguratie
 
-| Code | Parameter | Eenheid | Bereik / Opties | Ingesteld | HR-adres |
-|------|-----------|---------|-----------------|-----------|----------|
-| N01 | Power-modus | — | 0=Standaard / 1=Krachtig / 2=Eco / 3=Auto | 2 | 6465 |
-| N02 | Verwarmings- en koeltype | — | 0=Alleen verwarmen / 1=Verwarmen+koelen / 2=Alleen koelen | 0 | 6466 |
-| N04 | Vierwegklep instelling | — | 0=Verwarming open / 1=Koeling open | 1 | 6468 |
-| N05 | Type draadbedieningsschakelaar | — | 0=Tuimelschakelaar / 1=Pulsschakelaar | 0 | 6469 |
-| N06 | Eenheid Start/Stop controle | — | 0=Unie / 1=Afstandsbed. / 2=Lokaal / 3=Draadsbed. / 4=Netbed. | (niet beschikbaar in tablet) | 6470 |
-| N07 | Geheugen bewaren bij uitschakelen | — | 0=Uit / 1=Aan | 1 | 6471 |
-| N08 | Inkomende stroom zelfstart | — | 0=Uit / 1=Aan | 0 | 6472 ⚠ = P01! |
-| N11 | Warmwaterfunctie | — | 0=Uit / 1=Aan | 0 | 6475 |
-| N20 | Tank elektrische verwarming | — | 0=Uit / 1=Aan | 0 | 6484 |
-| N21 | Onderste retourpomp | — | 0=Uit / 1=Aan | 0 | 6485 |
-| N22 | Zonne | — | 0=Uit / 1=Aan | 0 | 6486 |
-| N23 | Koppelingsschakelaar instelling | — | 0=Uit / 1=Koppelactie / 2=Koppelsluiting / 3=Aan-uit draad / 4=Elektr.verw. DHW / 5=Ext.warmtebron | 3 | 6487 |
-| N26 | Type bediening draadcontroller | — | 0=Enkele zone / 2=Dubbele zone | 0 | 6490 |
-| N27 | Load correction amplitude | °C | is een bereik | 0 | | 
-| N32 | Slim netwerk | — | 0=Uit / 1=Aan | 1 | 6496 |
-| N36 | Inlaattemp.sensor vloerverwarming | — | 0=Uit / 1=Aan | 0 | 6500 |
-| N37 | Systeem totale uitlaat water temp.sensor | — | 0=Uit / 1=Aan | 1 | 6501 |
-| N38 | EVU PV-signaal | — | 0=Normaal open / 1=Normaal gesloten | 0 | 6502 |
-| N39 | SG-Grid-signaal | — | 0=Normaal open / 1=Normaal gesloten | 0 | 6503 |
-| N41 | Zonne-temperatuursensor | — | 0=Uit / 1=Aan | 0 | 6505 |
-| N48 | Zone A koeling einde | — | 0=Radiator / 1=Fan Coil / 2=Vloerverwarming | 2 | 6512 |
-| N49 | Zone A verwarmingseinde | — | 0=Radiator / 1=Fan Coil / 2=Vloerverwarming | 2 | 6513 |
+| Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
+|------|-----------|---------|-----------------|----------|
+| N01 | Power-modus | — | 0=Standaard / 1=Krachtig / 2=Eco / 3=Auto | 6465 |
+| N02 | Verwarmings- en koeltype | — | 0=Alleen verwarmen / 1=Verwarmen+koelen / 2=Alleen koelen | 6466 |
+| N04 | Vierwegklep instelling | — | 0=Verwarming open / 1=Koeling open | 6468 |
+| N05 | Type draadbedieningsschakelaar | — | 0=Tuimelschakelaar / 1=Pulsschakelaar | 6469 |
+| N06 | Eenheid Start/Stop controle | — | 0=Unie / 1=Afstandsbed. / 2=Lokaal / 3=Draadsbed. / 4=Netbed. | 6470 |
+| N07 | Geheugen bewaren bij uitschakelen | — | 0=Uit / 1=Aan | 6471 |
+| N08 | Inkomende stroom zelfstart | — | 0=Uit / 1=Aan | 6472 ⚠ = P01! |
+| N11 | Warmwaterfunctie | — | 0=Uit / 1=Aan | 6475 |
+| N20 | Tank elektrische verwarming | — | 0=Uit / 1=Aan | 6484 |
+| N21 | Onderste retourpomp | — | 0=Uit / 1=Aan | 6485 |
+| N22 | Zonne | — | 0=Uit / 1=Aan | 6486 |
+| N23 | Koppelingsschakelaar instelling | — | 0=Uit / 1=Koppelactie / 2=Koppelsluiting / 3=Aan-uit draad / 4=Elektr.verw. DHW / 5=Ext.warmtebron | 6487 |
+| N26 | Type bediening draadcontroller | — | 0=Enkele zone / 2=Dubbele zone | 6490 |
+| N27 | Load correction amplitude | °C | is een bereik | | 
+| N32 | Slim netwerk | — | 0=Uit / 1=Aan | 6496 |
+| N36 | Inlaattemp.sensor vloerverwarming | — | 0=Uit / 1=Aan | 6500 |
+| N37 | Systeem totale uitlaat water temp.sensor | — | 0=Uit / 1=Aan | 6501 |
+| N38 | EVU PV-signaal | — | 0=Normaal open / 1=Normaal gesloten | 6502 |
+| N39 | SG-Grid-signaal | — | 0=Normaal open / 1=Normaal gesloten | 6503 |
+| N41 | Zonne-temperatuursensor | — | 0=Uit / 1=Aan | 6505 |
+| N48 | Zone A koeling einde | — | 0=Radiator / 1=Fan Coil / 2=Vloerverwarming | 6512 |
+| N49 | Zone A verwarmingseinde | — | 0=Radiator / 1=Fan Coil / 2=Vloerverwarming | 6513 |
 
 ## M-serie: Temperatuur & Curve-instellingen
 
 > **Let op: Non-lineaire HR-mapping!** M00-M09 gebruiken simpele offset (HR = 6400 + Mxx).
 > Vanaf M10 verschuift de mapping met +15: HR = 6400 + Mxx + 15.
 > Dit komt doordat G01-G04 op HR[6412-6415] zitten (overlap met M12-M15 simpele offset).
-> HR[6411] is NIET M11 — bewezen in scan 4 (maart 2026).
+> HR[6411] is NIET M11.
 
-| Code | Parameter | Eenheid | Bereik / Opties | Ingesteld | HR-adres | Status |
-|------|-----------|---------|-----------------|-----------|----------|--------|
-| M01 | Koeling instelling temp. | °C | 15–35 | 10 | 6401 | ✓ |
-| M02 | Verwarmingsinstelling temp. | °C | 0–85 | **35** | 6402 | ✓ was 50 |
-| M03 | Insteltemperatuur warm water | °C | 0–80 | 50 | 6403 | ✓ |
-| M04 | Koeling doeltemp. kamer | °C | 0–80 | 18 | 6404 | ✓ was 26 |
-| M05 | Verwarming doeltemp. kamer | °C | 0–80 | 19 | 6405 | ✓ was 23 |
-| M08 | Verwarmingsinstelling temp. (B) | °C | 40–60 | 30 | 6408 | ✓ |
-| M10 | Zone A koelingscurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | 0 | **6425** | ✓ mode flag bij 6410 |
-| M11 | Zone A verwarmingscurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | **17** | **6426** | ✓ was 0, NIET 6411! |
-| M12 | Zone B koelcurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | 0 | **6427** | ✓ was 6412 |
-| M13 | Zone B verwarmingscurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | **17** | **6428** | ✓ was 6413, auto-sync M11 |
-| M14 | Aangepaste koelomgevingstemp. 1 | °C | −5 – 46 | 35 | **6429** | ✓ was 6414 |
-| M15 | Aangepaste koelomgevingstemp. 2 | °C | −5 – 46 | 25 | **6430** | ✓ was 6415 |
-| M16 | Aangepaste koeluitlaattemp. 1 | °C | 5–25 | 10 | **6431** | ✓ was 6416 |
-| M17 | Aangepaste koeluitlaattemp. 2 | °C | 5–25 | 16 | **6432** | ✓ was 6417 |
-| M18 | Aangepaste verwarmingsomgevingstemp. 1 | °C | −25 – 35 | 7 | **6433** | ✓ was 6418 |
-| M19 | Aangepaste verwarmingsomgevingstemp. 2 | °C | −25 – 35 | -5 | **6434** | ✓ was 6419 |
-| M20 | Aangepaste verwarmingsuitlaattemp. 1 | °C | 25–65 | 28 | **6435** | ✓ was 6420 |
-| M21 | Aangepaste verwarmingsuitlaattemp. 2 | °C | 25–65 | **38** | **6436** | ✓ was 6421, was 35 |
-| M35 | Min. omgevingstemp. auto koeling | °C | 20–29 | 25 | **6450?** | ⚠ niet geverifieerd |
-| M36 | Max. omgevingstemp. auto koeling | °C | 10–17 | 17 | **6451?** | ⚠ niet geverifieerd |
-| M37 | Vakantie weg verwarming | °C | 20–25 | 25 | **6452?** | ⚠ niet geverifieerd |
-| M38 | Vakantie weg warm water | °C | 20–25 | 25 | **6453?** | ⚠ niet geverifieerd |
-| M39 | Auxilliary electric heater setting | - | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | 0 | | |
-| M40 | Externe warmtebron | — | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | 1 | 6440 | ✓ |
-| M55 | Voorverwarmingstemp. vloerverwarming | °C | 25–35 | 25 | 6455 | ✓ simpele offset |
-| M56 | Voorverwarmingsinterval vloerverwarming | min | 10–40 | 30 | 6456 | ✓ |
-| M57 | Voorverwarmingstijd vloerverwarming | uur | 48–96 | 72 | 6457 | ✓ |
-| M58 | Vloerverwarming water temp. retour | °C | 0–10 | niet zichtbaar | 6458 | |
-| M59 | Vloerverwarming kamertemp. retourverschil | °C | 0–10 | niet zichtbaar | 6459 | |
-| M60 | Vloerverwarming voor droging | dag | 4–15 | 8 | 6460 | ✓ |
-| M61 | Vloerverwarming tijdens droging | dag | 3–7 | 5 | 6461 | ✓ |
-| M62 | Vloerverwarming na droging | dag | 4–15 | 5 | 6462 | ✓ |
-| M63 | Vloerverwarming droogtemp. | °C | 30–55 | 45 | 6463 | ✓ |
+| Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
+|------|-----------|---------|-----------------|----------|
+| M01 | Koeling instelling temp. | °C | 15–35 | 6401 |
+| M02 | Verwarmingsinstelling temp. | °C | 0–85 | 6402 |
+| M03 | Insteltemperatuur warm water | °C | 0–80 | 6403 |
+| M04 | Koeling doeltemp. kamer | °C | 0–80 | 6404 |
+| M05 | Verwarming doeltemp. kamer | °C | 0–80 | 6405 |
+| M08 | Verwarmingsinstelling temp. (B) | °C | 40–60 | 6408 |
+| M10 | Zone A koelingscurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | **6425** |
+| M11 | Zone A verwarmingscurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | **6426** |
+| M12 | Zone B koelcurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | **6427** |
+| M13 | Zone B verwarmingscurve | — | 0=Uit / 1-8=Lage temp. curve / 9-16=Hoge temp. curve / 17=Aangepast | **6428** |
+| M14 | Aangepaste koelomgevingstemp. 1 | °C | −5 – 46 | **6429** |
+| M15 | Aangepaste koelomgevingstemp. 2 | °C | −5 – 46 | **6430** |
+| M16 | Aangepaste koeluitlaattemp. 1 | °C | 5–25 | **6431** |
+| M17 | Aangepaste koeluitlaattemp. 2 | °C | 5–25 | **6432** |
+| M18 | Aangepaste verwarmingsomgevingstemp. 1 | °C | −25 – 35 | **6433** |
+| M19 | Aangepaste verwarmingsomgevingstemp. 2 | °C | −25 – 35 | **6434** |
+| M20 | Aangepaste verwarmingsuitlaattemp. 1 | °C | 25–65 | **6435** |
+| M21 | Aangepaste verwarmingsuitlaattemp. 2 | °C | 25–65 | **6436** |
+| M35 | Min. omgevingstemp. auto koeling | °C | 20–29 | **6450?** |
+| M36 | Max. omgevingstemp. auto koeling | °C | 10–17 | **6451?** |
+| M37 | Vakantie weg verwarming | °C | 20–25 | **6452?** |
+| M38 | Vakantie weg warm water | °C | 20–25 | **6453?** |
+| M39 | Auxilliary electric heater setting | - | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | |
+| M40 | Externe warmtebron | — | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | 6440 |
+| M55 | Voorverwarmingstemp. vloerverwarming | °C | 25–35 | 6455 |
+| M56 | Voorverwarmingsinterval vloerverwarming | min | 10–40 | 6456 |
+| M57 | Voorverwarmingstijd vloerverwarming | uur | 48–96 | 6457 |
+| M58 | Vloerverwarming water temp. retour | °C | 0–10 | 6458 |
+| M59 | Vloerverwarming kamertemp. retourverschil | °C | 0–10 | 6459 |
+| M60 | Vloerverwarming voor droging | dag | 4–15 | 6460 |
+| M61 | Vloerverwarming tijdens droging | dag | 3–7 | 6461 |
+| M62 | Vloerverwarming na droging | dag | 4–15 | 6462 |
+| M63 | Vloerverwarming droogtemp. | °C | 30–55 | 6463 |
 
 ## F-serie: Ventilator
 
-| Code | Parameter | Eenheid | Bereik / Opties | Ingesteld | HR-adres |
-|------|-----------|---------|-----------------|-----------|----------|
-| F06 | Ventilatorsnelheid regeling | — | 0=Handmatig / 1=Omgevingstemp. lineair / 2=Vintemp. lineair | niet in tablet | ? |
-| F07 | Ventilator handmatige bediening | rps | 0–2000 | niet in tablet | ? |
+| Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
+|------|-----------|---------|-----------------|----------|
+| F06 | Ventilatorsnelheid regeling | — | 0=Handmatig / 1=Omgevingstemp. lineair / 2=Vintemp. lineair | ? |
+| F07 | Ventilator handmatige bediening | rps | 0–2000 | ? |
 
 ## P-serie: Waterpomp
 
-| Code | Parameter | Eenheid | Bereik / Opties | Ingesteld | HR-adres |
-|------|-----------|---------|-----------------|-----------|----------|
-| P01 | Werkingsmodus waterpomp | — | 0=Blijf draaien / 1=Stop bij temp. / 2=Intermitterend | **1** | **6472** |
-| P02 | Waterpomp regeltype | — | 1=Snelheid / 2=Stroom / 3=AAN-UIT / 4=Vermogen | 1 | ? |
-| P03 | Doelsnelheid waterpomp | rpm | 1000–4500 | 6800 | ? |
-| P04 | Fabrikant waterpomp | — | 0–4 | 8 | ? |
-| P05 | Doelstroom waterpomp | L/uur | 0–4500 | 2100 | ? |
-| P06 | Onderste retourwaterpomp interval | min | 5–120 | 5 | ? |
-| P07 | Sterilisatie onderste retourpomp | — | 0=Uit / 1=Aan | 0 | ? |
-| P08 | Onderste retourpomp getimed | — | 0=Uit / 1=Aan | 0 | ? |
-| P09 | Water pump intermittent stop time | min | ? | 999 | ? |
-| P20 | Water pump intermittent running time | min | ? | 5 | ? |
+| Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
+|------|-----------|---------|-----------------|----------|
+| P01 | Werkingsmodus waterpomp | — | 0=Blijf draaien / 1=Stop bij temp. / 2=Intermitterend | **6472** |
+| P02 | Waterpomp regeltype | — | 1=Snelheid / 2=Stroom / 3=AAN-UIT / 4=Vermogen | ? |
+| P03 | Doelsnelheid waterpomp | rpm | 1000–4500 | ? |
+| P04 | Fabrikant waterpomp | — | 0–4 | ? |
+| P05 | Doelstroom waterpomp | L/uur | 0–4500 | ? |
+| P06 | Onderste retourwaterpomp interval | min | 5–120 | ? |
+| P07 | Sterilisatie onderste retourpomp | — | 0=Uit / 1=Aan | ? |
+| P08 | Onderste retourpomp getimed | — | 0=Uit / 1=Aan | ? |
+| P09 | Water pump intermittent stop time | min | ? | ? |
+| P20 | Water pump intermittent running time | min | ? | ? |
 
 ## G-serie: Sterilisatie (DHW)
 
-| Code | Parameter | Eenheid | Bereik / Opties | Ingesteld | HR-adres |
-|------|-----------|---------|-----------------|-----------|----------|
-| G01 | Sterilisatiefunctie | — | 0=Uit / 1=Aan | 0 | **6412** |
-| G02 | Sterilisatietemperatuur | °C | 60–70 | 70 | **6413** |
-| G03 | Sterilisatie max. cyclus | min | 90–300 | 210 | **6414** |
-| G04 | Sterilisatie hoge temp. tijd | min | 5–60 | 15 | **6415** |
+| Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
+|------|-----------|---------|-----------------|----------|
+| G01 | Sterilisatiefunctie | — | 0=Uit / 1=Aan | **6412** |
+| G02 | Sterilisatietemperatuur | °C | 60–70 | **6413** |
+| G03 | Sterilisatie max. cyclus | min | 90–300 | **6414** |
+| G04 | Sterilisatie hoge temp. tijd | min | 5–60 | **6415** |
 
 ## T-serie: Temperatuur & Status Monitor
 

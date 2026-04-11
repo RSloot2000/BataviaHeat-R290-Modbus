@@ -4,104 +4,104 @@
 
 ## N-series: System Configuration
 
-| Code | Parameter | Unit | Range / Options | Set to | HR address |
-|------|-----------|------|-----------------|--------|------------|
-| N01 | Power mode | - | 0=Standard / 1=Powerful / 2=Eco / 3=Auto | 2 | 6465 |
-| N02 | Heating and cooling type | - | 0=Heating only / 1=Heating+cooling / 2=Cooling only | 0 | 6466 |
-| N04 | Four-way valve setting | - | 0=Heating open / 1=Cooling open | 1 | 6468 |
-| N05 | Wire controller switch type | - | 0=Toggle switch / 1=Pulse switch | 0 | 6469 |
-| N06 | Unit start/stop control | - | 0=Union / 1=Remote / 2=Local / 3=Wire ctrl / 4=Network ctrl | (not available on tablet) | 6470 |
-| N07 | Power-off memory | - | 0=Off / 1=On | 1 | 6471 |
-| N08 | Power-on auto-start | - | 0=Off / 1=On | 0 | 6472 ⚠ = P01! |
-| N11 | DHW function | - | 0=Off / 1=On | 0 | 6475 |
-| N20 | Tank electric heater | - | 0=Off / 1=On | 0 | 6484 |
-| N21 | Lower return pump | - | 0=Off / 1=On | 0 | 6485 |
-| N22 | Solar | - | 0=Off / 1=On | 0 | 6486 |
-| N23 | Coupling switch setting | - | 0=Off / 1=Coupling action / 2=Coupling closure / 3=On-off wire / 4=DHW electric heater / 5=External heat source | 3 | 6487 |
-| N26 | Wire controller operation type | - | 0=Single zone / 2=Dual zone | 0 | 6490 |
-| N27 | Load correction amplitude | °C | range | 0 | |
-| N32 | Smart network | - | 0=Off / 1=On | 1 | 6496 |
-| N36 | Underfloor heating inlet temp sensor | - | 0=Off / 1=On | 0 | 6500 |
-| N37 | System total outlet water temp sensor | - | 0=Off / 1=On | 1 | 6501 |
-| N38 | EVU PV signal | - | 0=Normally open / 1=Normally closed | 0 | 6502 |
-| N39 | SG Grid signal | - | 0=Normally open / 1=Normally closed | 0 | 6503 |
-| N41 | Solar temperature sensor | - | 0=Off / 1=On | 0 | 6505 |
-| N48 | Zone A cooling terminal | - | 0=Radiator / 1=Fan Coil / 2=Underfloor heating | 2 | 6512 |
-| N49 | Zone A heating terminal | - | 0=Radiator / 1=Fan Coil / 2=Underfloor heating | 2 | 6513 |
+| Code | Parameter | Unit | Range / Options | HR address |
+|------|-----------|------|-----------------|------------|
+| N01 | Power mode | - | 0=Standard / 1=Powerful / 2=Eco / 3=Auto | 6465 |
+| N02 | Heating and cooling type | - | 0=Heating only / 1=Heating+cooling / 2=Cooling only | 6466 |
+| N04 | Four-way valve setting | - | 0=Heating open / 1=Cooling open | 6468 |
+| N05 | Wire controller switch type | - | 0=Toggle switch / 1=Pulse switch | 6469 |
+| N06 | Unit start/stop control | - | 0=Union / 1=Remote / 2=Local / 3=Wire ctrl / 4=Network ctrl | 6470 |
+| N07 | Power-off memory | - | 0=Off / 1=On | 6471 |
+| N08 | Power-on auto-start | - | 0=Off / 1=On | 6472 ⚠ = P01! |
+| N11 | DHW function | - | 0=Off / 1=On | 6475 |
+| N20 | Tank electric heater | - | 0=Off / 1=On | 6484 |
+| N21 | Lower return pump | - | 0=Off / 1=On | 6485 |
+| N22 | Solar | - | 0=Off / 1=On | 6486 |
+| N23 | Coupling switch setting | - | 0=Off / 1=Coupling action / 2=Coupling closure / 3=On-off wire / 4=DHW electric heater / 5=External heat source | 6487 |
+| N26 | Wire controller operation type | - | 0=Single zone / 2=Dual zone | 6490 |
+| N27 | Load correction amplitude | °C | range | |
+| N32 | Smart network | - | 0=Off / 1=On | 6496 |
+| N36 | Underfloor heating inlet temp sensor | - | 0=Off / 1=On | 6500 |
+| N37 | System total outlet water temp sensor | - | 0=Off / 1=On | 6501 |
+| N38 | EVU PV signal | - | 0=Normally open / 1=Normally closed | 6502 |
+| N39 | SG Grid signal | - | 0=Normally open / 1=Normally closed | 6503 |
+| N41 | Solar temperature sensor | - | 0=Off / 1=On | 6505 |
+| N48 | Zone A cooling terminal | - | 0=Radiator / 1=Fan Coil / 2=Underfloor heating | 6512 |
+| N49 | Zone A heating terminal | - | 0=Radiator / 1=Fan Coil / 2=Underfloor heating | 6513 |
 
 ## M-series: Temperature & Curve Settings
 
 > **Note: Non-linear HR mapping!** M00-M09 use a simple offset (HR = 6400 + Mxx).
 > From M10 onwards the mapping shifts by +15: HR = 6400 + Mxx + 15.
 > This is because G01-G04 occupy HR[6412-6415] (overlapping with M12-M15 simple offset).
-> HR[6411] is NOT M11 - proven in scan 4 (March 2026).
+> HR[6411] is NOT M11.
 
-| Code | Parameter | Unit | Range / Options | Set to | HR address | Status |
-|------|-----------|------|-----------------|--------|------------|--------|
-| M01 | Cooling setpoint temp | °C | 15-35 | 10 | 6401 | ✓ |
-| M02 | Heating setpoint temp | °C | 0-85 | **35** | 6402 | ✓ was 50 |
-| M03 | DHW setpoint temp | °C | 0-80 | 50 | 6403 | ✓ |
-| M04 | Cooling room target temp | °C | 0-80 | 18 | 6404 | ✓ was 26 |
-| M05 | Heating room target temp | °C | 0-80 | 19 | 6405 | ✓ was 23 |
-| M08 | Heating setpoint temp (zone B) | °C | 40-60 | 30 | 6408 | ✓ |
-| M10 | Zone A cooling curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | 0 | **6425** | ✓ mode flag at 6410 |
-| M11 | Zone A heating curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | **17** | **6426** | ✓ was 0, NOT 6411! |
-| M12 | Zone B cooling curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | 0 | **6427** | ✓ was 6412 |
-| M13 | Zone B heating curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | **17** | **6428** | ✓ was 6413, auto-sync M11 |
-| M14 | Custom cooling outdoor temp 1 | °C | -5 - 46 | 35 | **6429** | ✓ was 6414 |
-| M15 | Custom cooling outdoor temp 2 | °C | -5 - 46 | 25 | **6430** | ✓ was 6415 |
-| M16 | Custom cooling outlet temp 1 | °C | 5-25 | 10 | **6431** | ✓ was 6416 |
-| M17 | Custom cooling outlet temp 2 | °C | 5-25 | 16 | **6432** | ✓ was 6417 |
-| M18 | Custom heating outdoor temp 1 | °C | -25 - 35 | 7 | **6433** | ✓ was 6418 |
-| M19 | Custom heating outdoor temp 2 | °C | -25 - 35 | -5 | **6434** | ✓ was 6419 |
-| M20 | Custom heating outlet temp 1 | °C | 25-65 | 28 | **6435** | ✓ was 6420 |
-| M21 | Custom heating outlet temp 2 | °C | 25-65 | **38** | **6436** | ✓ was 6421, was 35 |
-| M35 | Min outdoor temp auto cooling | °C | 20-29 | 25 | **6450?** | ⚠ not verified |
-| M36 | Max outdoor temp auto cooling | °C | 10-17 | 17 | **6451?** | ⚠ not verified |
-| M37 | Holiday away heating | °C | 20-25 | 25 | **6452?** | ⚠ not verified |
-| M38 | Holiday away DHW | °C | 20-25 | 25 | **6453?** | ⚠ not verified |
-| M39 | Auxiliary electric heater setting | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | 0 | | |
-| M40 | External heat source | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | 1 | 6440 | ✓ |
-| M55 | Underfloor heating preheat temp | °C | 25-35 | 25 | 6455 | ✓ simple offset |
-| M56 | Underfloor heating preheat interval | min | 10-40 | 30 | 6456 | ✓ |
-| M57 | Underfloor heating preheat duration | hr | 48-96 | 72 | 6457 | ✓ |
-| M58 | Underfloor heating water temp return | °C | 0-10 | not visible | 6458 | |
-| M59 | Underfloor heating room temp return diff | °C | 0-10 | not visible | 6459 | |
-| M60 | Underfloor heating pre-drying | days | 4-15 | 8 | 6460 | ✓ |
-| M61 | Underfloor heating during drying | days | 3-7 | 5 | 6461 | ✓ |
-| M62 | Underfloor heating post-drying | days | 4-15 | 5 | 6462 | ✓ |
-| M63 | Underfloor heating drying temp | °C | 30-55 | 45 | 6463 | ✓ |
+| Code | Parameter | Unit | Range / Options | HR address |
+|------|-----------|------|-----------------|------------|
+| M01 | Cooling setpoint temp | °C | 15-35 | 6401 |
+| M02 | Heating setpoint temp | °C | 0-85 | 6402 |
+| M03 | DHW setpoint temp | °C | 0-80 | 6403 |
+| M04 | Cooling room target temp | °C | 0-80 | 6404 |
+| M05 | Heating room target temp | °C | 0-80 | 6405 |
+| M08 | Heating setpoint temp (zone B) | °C | 40-60 | 6408 |
+| M10 | Zone A cooling curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | **6425** |
+| M11 | Zone A heating curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | **6426** |
+| M12 | Zone B cooling curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | **6427** |
+| M13 | Zone B heating curve | - | 0=Off / 1-8=Low temp curve / 9-16=High temp curve / 17=Custom | **6428** |
+| M14 | Custom cooling outdoor temp 1 | °C | -5 - 46 | **6429** |
+| M15 | Custom cooling outdoor temp 2 | °C | -5 - 46 | **6430** |
+| M16 | Custom cooling outlet temp 1 | °C | 5-25 | **6431** |
+| M17 | Custom cooling outlet temp 2 | °C | 5-25 | **6432** |
+| M18 | Custom heating outdoor temp 1 | °C | -25 - 35 | **6433** |
+| M19 | Custom heating outdoor temp 2 | °C | -25 - 35 | **6434** |
+| M20 | Custom heating outlet temp 1 | °C | 25-65 | **6435** |
+| M21 | Custom heating outlet temp 2 | °C | 25-65 | **6436** |
+| M35 | Min outdoor temp auto cooling | °C | 20-29 | **6450?** |
+| M36 | Max outdoor temp auto cooling | °C | 10-17 | **6451?** |
+| M37 | Holiday away heating | °C | 20-25 | **6452?** |
+| M38 | Holiday away DHW | °C | 20-25 | **6453?** |
+| M39 | Auxiliary electric heater setting | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | |
+| M40 | External heat source | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | 6440 |
+| M55 | Underfloor heating preheat temp | °C | 25-35 | 6455 |
+| M56 | Underfloor heating preheat interval | min | 10-40 | 6456 |
+| M57 | Underfloor heating preheat duration | hr | 48-96 | 6457 |
+| M58 | Underfloor heating water temp return | °C | 0-10 | 6458 |
+| M59 | Underfloor heating room temp return diff | °C | 0-10 | 6459 |
+| M60 | Underfloor heating pre-drying | days | 4-15 | 6460 |
+| M61 | Underfloor heating during drying | days | 3-7 | 6461 |
+| M62 | Underfloor heating post-drying | days | 4-15 | 6462 |
+| M63 | Underfloor heating drying temp | °C | 30-55 | 6463 |
 
 ## F-series: Fan
 
-| Code | Parameter | Unit | Range / Options | Set to | HR address |
-|------|-----------|------|-----------------|--------|------------|
-| F06 | Fan speed control | - | 0=Manual / 1=Ambient temp linear / 2=Fin temp linear | not on tablet | ? |
-| F07 | Fan manual control | rps | 0-2000 | not on tablet | ? |
+| Code | Parameter | Unit | Range / Options | HR address |
+|------|-----------|------|-----------------|------------|
+| F06 | Fan speed control | - | 0=Manual / 1=Ambient temp linear / 2=Fin temp linear | ? |
+| F07 | Fan manual control | rps | 0-2000 | ? |
 
 ## P-series: Water Pump
 
-| Code | Parameter | Unit | Range / Options | Set to | HR address |
-|------|-----------|------|-----------------|--------|------------|
-| P01 | Water pump operating mode | - | 0=Continuous / 1=Stop at temp / 2=Intermittent | **1** | **6472** |
-| P02 | Water pump control type | - | 1=Speed / 2=Flow / 3=ON-OFF / 4=Power | 1 | ? |
-| P03 | Water pump target speed | rpm | 1000-4500 | 6800 | ? |
-| P04 | Water pump manufacturer | - | 0-4 | 8 | ? |
-| P05 | Water pump target flow | L/hr | 0-4500 | 2100 | ? |
-| P06 | Lower return water pump interval | min | 5-120 | 5 | ? |
-| P07 | Lower return pump sterilization | - | 0=Off / 1=On | 0 | ? |
-| P08 | Lower return pump timed | - | 0=Off / 1=On | 0 | ? |
-| P09 | Water pump intermittent stop time | min | ? | 999 | ? |
-| P20 | Water pump intermittent running time | min | ? | 5 | ? |
+| Code | Parameter | Unit | Range / Options | HR address |
+|------|-----------|------|-----------------|------------|
+| P01 | Water pump operating mode | - | 0=Continuous / 1=Stop at temp / 2=Intermittent | **6472** |
+| P02 | Water pump control type | - | 1=Speed / 2=Flow / 3=ON-OFF / 4=Power | ? |
+| P03 | Water pump target speed | rpm | 1000-4500 | ? |
+| P04 | Water pump manufacturer | - | 0-4 | ? |
+| P05 | Water pump target flow | L/hr | 0-4500 | ? |
+| P06 | Lower return water pump interval | min | 5-120 | ? |
+| P07 | Lower return pump sterilization | - | 0=Off / 1=On | ? |
+| P08 | Lower return pump timed | - | 0=Off / 1=On | ? |
+| P09 | Water pump intermittent stop time | min | ? | ? |
+| P20 | Water pump intermittent running time | min | ? | ? |
 
 ## G-series: Sterilization (DHW)
 
-| Code | Parameter | Unit | Range / Options | Set to | HR address |
-|------|-----------|------|-----------------|--------|------------|
-| G01 | Sterilization function | - | 0=Off / 1=On | 0 | **6412** |
-| G02 | Sterilization temperature | °C | 60-70 | 70 | **6413** |
-| G03 | Sterilization max cycle | min | 90-300 | 210 | **6414** |
-| G04 | Sterilization high temp duration | min | 5-60 | 15 | **6415** |
+| Code | Parameter | Unit | Range / Options | HR address |
+|------|-----------|------|-----------------|------------|
+| G01 | Sterilization function | - | 0=Off / 1=On | **6412** |
+| G02 | Sterilization temperature | °C | 60-70 | **6413** |
+| G03 | Sterilization max cycle | min | 90-300 | **6414** |
+| G04 | Sterilization high temp duration | min | 5-60 | **6415** |
 
 ## T-series: Temperature & Status Monitor
 
