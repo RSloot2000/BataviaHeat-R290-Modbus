@@ -89,9 +89,9 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
         return HVACMode.OFF
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set new target temperature via HR[4]."""
+        """Set new target temperature via HR[4] (raw = temp × 10, scale 0.1)."""
         if (temp := kwargs.get("temperature")) is not None:
-            await self.coordinator.async_write_register(REG_TARGET_TEMP, int(temp))
+            await self.coordinator.async_write_register(REG_TARGET_TEMP, int(temp * 10))
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode by pulsing unit on/off coils."""

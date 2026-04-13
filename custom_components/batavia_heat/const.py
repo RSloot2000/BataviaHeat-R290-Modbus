@@ -19,8 +19,8 @@ CONF_BAUDRATE = "baudrate"
 CONNECTION_TCP = "tcp"
 CONNECTION_SERIAL = "serial"
 
-# Update interval in seconds
-DEFAULT_SCAN_INTERVAL = 5
+# Update interval in seconds (10s is comfortable for DR164 gateway latency)
+DEFAULT_SCAN_INTERVAL = 10
 
 # Special marker values for disconnected sensors
 SENSOR_DISCONNECTED = (32834, 32836)  # 0x8042, 0x8044 → -3270.x°C

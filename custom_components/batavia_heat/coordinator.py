@@ -13,7 +13,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    COILS,
     CONF_BAUDRATE,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
@@ -24,7 +23,6 @@ from .const import (
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
     DEFAULT_SCAN_INTERVAL,
-    DISCRETE_INPUTS,
     DOMAIN,
     HOLDING_REGISTERS,
     INPUT_REGISTERS,
@@ -32,6 +30,29 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Efficient bulk-read groups: (start_address, count)
+# All read via FC03 — confirmed: FC03 and FC04 return identical data on this device.
+# ~8 requests per cycle instead of ~25+ individual reads.
+_READ_GROUPS: list[tuple[int, int]] = [
+    (4, 1),       # HR[4]: heating target temp
+    (22, 4),      # HR[22-25]: ambient, fin coil, suction, discharge temps
+    (32, 2),      # HR[32-33]: low/high pressure
+    (53, 2),      # HR[53-54]: pump target speed, flow rate
+    (66, 1),      # HR[66]: pump control signal
+    (135, 8),     # HR[135-142]: HX temps, module temps, pump feedback
+    (768, 9),     # HR[768-776]: operational status .. water outlet temp
+    (1283, 1),    # HR[1283]: compressor running
+    (6402, 1),    # HR[6402]: max heating temperature
+    (6426, 11),   # HR[6426-6436]: heating curve params
+]
+
+# Build lookup: address → (dict_key, reg_info) for fast dispatch after bulk read
+_ADDR_MAP: dict[int, tuple[str, dict]] = {}
+for _addr, _info in HOLDING_REGISTERS.items():
+    _ADDR_MAP[_addr] = ("holding", _info)
+for _addr, _info in INPUT_REGISTERS.items():
+    _ADDR_MAP[_addr] = ("input", _info)
 
 
 class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -84,7 +105,13 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._client
 
     def _read_all_registers(self) -> dict[str, Any]:
-        """Read all configured registers from the heat pump."""
+        """Read all configured registers using efficient bulk reads.
+
+        Uses FC03 for all reads — confirmed that FC03 and FC04 return
+        identical data on the BataviaHeat R290. Results are dispatched
+        to "holding" or "input" dicts based on the register definitions
+        so sensor.py can find them in the expected location.
+        """
         client = self._get_client()
         data: dict[str, Any] = {
             "holding": {},
@@ -93,54 +120,27 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "discrete": {},
         }
 
-        # Read holding registers
-        for addr, reg_info in HOLDING_REGISTERS.items():
+        for start_addr, count in _READ_GROUPS:
             try:
-                result = client.read_holding_registers(addr, count=1, device_id=self._slave_id)
-                if not result.isError():
-                    raw = result.registers[0]
+                result = client.read_holding_registers(
+                    start_addr, count=count, device_id=self._slave_id
+                )
+                if result.isError():
+                    _LOGGER.debug("Error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
+                    continue
+                for i, raw in enumerate(result.registers):
+                    addr = start_addr + i
+                    if addr not in _ADDR_MAP:
+                        continue
                     if raw in SENSOR_DISCONNECTED:
-                        continue  # Skip disconnected sensors
+                        continue
+                    dict_key, reg_info = _ADDR_MAP[addr]
                     scale = reg_info.get("scale", 1)
-                    # Handle signed values (skip for unsigned counters)
                     if reg_info.get("signed", True) and raw > 32767:
                         raw = raw - 65536
-                    data["holding"][addr] = raw * scale
-            except (ModbusException, Exception) as err:
-                _LOGGER.debug("Error reading holding register %d: %s", addr, err)
-
-        # Read input registers
-        for addr, reg_info in INPUT_REGISTERS.items():
-            try:
-                result = client.read_input_registers(addr, count=1, device_id=self._slave_id)
-                if not result.isError():
-                    raw = result.registers[0]
-                    if raw in SENSOR_DISCONNECTED:
-                        continue  # Skip disconnected sensors
-                    scale = reg_info.get("scale", 1)
-                    if raw > 32767:
-                        raw = raw - 65536
-                    data["input"][addr] = raw * scale
-            except (ModbusException, Exception) as err:
-                _LOGGER.debug("Error reading input register %d: %s", addr, err)
-
-        # Read coils
-        for addr in COILS:
-            try:
-                result = client.read_coils(addr, count=1, device_id=self._slave_id)
-                if not result.isError():
-                    data["coil"][addr] = bool(result.bits[0])
-            except (ModbusException, Exception) as err:
-                _LOGGER.debug("Error reading coil %d: %s", addr, err)
-
-        # Read discrete inputs
-        for addr in DISCRETE_INPUTS:
-            try:
-                result = client.read_discrete_inputs(addr, count=1, device_id=self._slave_id)
-                if not result.isError():
-                    data["discrete"][addr] = bool(result.bits[0])
-            except (ModbusException, Exception) as err:
-                _LOGGER.debug("Error reading discrete input %d: %s", addr, err)
+                    data[dict_key][addr] = raw * scale
+            except ModbusException as err:
+                _LOGGER.debug("Modbus error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
 
         return data
 
