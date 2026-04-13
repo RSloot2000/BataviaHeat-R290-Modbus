@@ -77,7 +77,7 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
         """Available when coordinator is connected and parent (if any) is ON."""
         if not self.coordinator.last_update_success:
             return False
-        if self._parent is not None and not self._parent.is_on:
+        if self._parent is not None and self._parent.is_on is False:
             return False
         return True
 

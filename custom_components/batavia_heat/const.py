@@ -273,14 +273,14 @@ INPUT_REGISTERS: dict[int, dict] = {
 
     # ─── Module 0# Temperatures ───
     135: {
-        "name": "plate_hx_inlet_temperature",
+        "name": "plate_hx_water_inlet_temperature",
         "device_class": "temperature",
         "unit": "°C",
         "scale": 0.1,
         "entity_type": "sensor",
     },
     136: {
-        "name": "plate_hx_outlet_temperature",
+        "name": "plate_hx_water_outlet_temperature",
         "device_class": "temperature",
         "unit": "°C",
         "scale": 0.1,

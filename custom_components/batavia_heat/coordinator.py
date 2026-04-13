@@ -32,19 +32,25 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # Efficient bulk-read groups: (start_address, count)
-# All read via FC03 — confirmed: FC03 and FC04 return identical data on this device.
-# ~8 requests per cycle instead of ~25+ individual reads.
-_READ_GROUPS: list[tuple[int, int]] = [
-    (22, 4),      # HR[22-25]: ambient, fin coil, suction, discharge temps
-    (32, 2),      # HR[32-33]: low/high pressure
-    (53, 2),      # HR[53-54]: pump target speed, flow rate
-    (66, 1),      # HR[66]: pump control signal
-    (135, 8),     # HR[135-142]: HX temps, module temps, pump feedback
+# Split by function code — FC03=FC04 is NOT true for all address ranges.
+# Addresses 135+ return wrong data via FC03; must use FC04.
+
+# FC03 — Holding registers (operational, config, setpoints)
+_HOLDING_READ_GROUPS: list[tuple[int, int]] = [
     (768, 9),     # HR[768-776]: operational status .. water outlet temp
     (1283, 1),    # HR[1283]: compressor running
     (6402, 1),    # HR[6402]: max heating temperature
     (6426, 11),   # HR[6426-6436]: heating curve params
     (6465, 1),    # HR[6465]: N01 power mode
+]
+
+# FC04 — Input registers (live sensor data from heat pump hardware)
+_INPUT_READ_GROUPS: list[tuple[int, int]] = [
+    (22, 4),      # IR[22-25]: ambient, fin coil, suction, discharge temps
+    (32, 2),      # IR[32-33]: low/high pressure
+    (53, 2),      # IR[53-54]: pump target speed, flow rate
+    (66, 1),      # IR[66]: pump control signal
+    (135, 8),     # IR[135-142]: HX temps, module temps, pump feedback
 ]
 
 # Build lookup: address → (dict_key, reg_info) for fast dispatch after bulk read
@@ -90,7 +96,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     stopbits=1,
                     bytesize=8,
                     parity="N",
-                    timeout=3,
+                    timeout=5,
                 )
                 if not self._client.connect():
                     raise ConnectionError(f"Cannot open serial port {self._serial_port}")
@@ -98,19 +104,26 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._client = ModbusTcpClient(
                     host=self._host,
                     port=self._tcp_port,
-                    timeout=3,
+                    timeout=5,
                 )
                 if not self._client.connect():
                     raise ConnectionError(f"Cannot connect to {self._host}:{self._tcp_port}")
         return self._client
 
-    def _read_all_registers(self) -> dict[str, Any]:
-        """Read all configured registers using efficient bulk reads.
+    def _reset_client(self) -> None:
+        """Force-close the client so the next poll creates a fresh connection."""
+        if self._client:
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._client = None
 
-        Uses FC03 for all reads — confirmed that FC03 and FC04 return
-        identical data on the BataviaHeat R290. Results are dispatched
-        to "holding" or "input" dicts based on the register definitions
-        so sensor.py can find them in the expected location.
+    def _read_all_registers(self) -> dict[str, Any]:
+        """Read all configured registers using FC03 (holding) and FC04 (input).
+
+        FC03 and FC04 return identical data for low addresses (0-100),
+        but for addresses 135+ FC04 is required for correct sensor data.
         """
         client = self._get_client()
         data: dict[str, Any] = {
@@ -120,7 +133,21 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "discrete": {},
         }
 
-        for start_addr, count in _READ_GROUPS:
+        def _process_registers(start_addr: int, registers: list[int]) -> None:
+            for i, raw in enumerate(registers):
+                addr = start_addr + i
+                if addr not in _ADDR_MAP:
+                    continue
+                if raw in SENSOR_DISCONNECTED:
+                    continue
+                dict_key, reg_info = _ADDR_MAP[addr]
+                scale = reg_info.get("scale", 1)
+                if reg_info.get("signed", True) and raw > 32767:
+                    raw = raw - 65536
+                data[dict_key][addr] = raw * scale
+
+        # FC03 — Holding registers
+        for start_addr, count in _HOLDING_READ_GROUPS:
             try:
                 result = client.read_holding_registers(
                     start_addr, count=count, device_id=self._slave_id
@@ -128,19 +155,22 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if result.isError():
                     _LOGGER.debug("Error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
                     continue
-                for i, raw in enumerate(result.registers):
-                    addr = start_addr + i
-                    if addr not in _ADDR_MAP:
-                        continue
-                    if raw in SENSOR_DISCONNECTED:
-                        continue
-                    dict_key, reg_info = _ADDR_MAP[addr]
-                    scale = reg_info.get("scale", 1)
-                    if reg_info.get("signed", True) and raw > 32767:
-                        raw = raw - 65536
-                    data[dict_key][addr] = raw * scale
+                _process_registers(start_addr, result.registers)
             except ModbusException as err:
                 _LOGGER.debug("Modbus error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
+
+        # FC04 — Input registers
+        for start_addr, count in _INPUT_READ_GROUPS:
+            try:
+                result = client.read_input_registers(
+                    start_addr, count=count, device_id=self._slave_id
+                )
+                if result.isError():
+                    _LOGGER.debug("Error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
+                    continue
+                _process_registers(start_addr, result.registers)
+            except ModbusException as err:
+                _LOGGER.debug("Modbus error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
 
         return data
 
@@ -149,8 +179,10 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             return await self.hass.async_add_executor_job(self._read_all_registers)
         except ConnectionError as err:
+            self._reset_client()
             raise UpdateFailed(f"Connection error: {err}") from err
         except Exception as err:
+            self._reset_client()
             raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
 
     async def async_write_register(self, address: int, value: int) -> None:

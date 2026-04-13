@@ -178,13 +178,18 @@ class BataviaHeatCalculatedSensor(SensorEntity):
             # thermal_power = flow_rate(L/h) × (outlet−inlet)(°C) × 4.186(J/g·°C) / 3600
             # Result in kW
             flow = data.get("input", {}).get(54)      # L/h
-            inlet = data.get("input", {}).get(135)     # °C
-            outlet = data.get("input", {}).get(136)    # °C
+            inlet = data.get("input", {}).get(135)     # °C (water inlet plate HX)
+            outlet = data.get("input", {}).get(136)    # °C (water outlet plate HX)
             if flow is None or inlet is None or outlet is None:
                 return None
             if flow <= 0:
                 return 0.0
-            return round(flow * (outlet - inlet) * 4.186 / 3600, 3)
+            result = round(flow * (outlet - inlet) * 4.186 / 3600, 3)
+            # Sanity check: 3-8kW heat pump, max ~15kW realistic
+            if abs(result) > 30:
+                return None
+            # Heating mode: thermal power should be positive
+            return max(result, 0.0)
 
         return None
 
