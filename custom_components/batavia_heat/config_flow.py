@@ -40,15 +40,19 @@ async def validate_tcp_connection(hass: HomeAssistant, data: dict[str, Any]) -> 
     from pymodbus.client import ModbusTcpClient
 
     def _test() -> None:
+        # NumberSelector returns float — pymodbus needs int for port and device_id
+        port = int(data[CONF_TCP_PORT])
+        slave = int(data[CONF_SLAVE_ID])
         client = ModbusTcpClient(
             host=data[CONF_HOST],
-            port=data[CONF_TCP_PORT],
-            timeout=3,
+            port=port,
+            timeout=5,
         )
         try:
             if not client.connect():
                 raise ConnectionError("Cannot connect to host")
-            result = client.read_holding_registers(0, count=1, device_id=data[CONF_SLAVE_ID])
+            # Read HR[22] (ambient temperature) — confirmed working register
+            result = client.read_holding_registers(22, count=1, device_id=slave)
             if result.isError():
                 raise ConnectionError("No Modbus response from device")
         finally:
@@ -62,18 +66,20 @@ async def validate_serial_connection(hass: HomeAssistant, data: dict[str, Any]) 
     from pymodbus.client import ModbusSerialClient
 
     def _test() -> None:
+        slave = int(data[CONF_SLAVE_ID])
+        baudrate = int(data[CONF_BAUDRATE])
         client = ModbusSerialClient(
             port=data[CONF_SERIAL_PORT],
-            baudrate=data[CONF_BAUDRATE],
+            baudrate=baudrate,
             stopbits=1,
             bytesize=8,
             parity="N",
-            timeout=3,
+            timeout=5,
         )
         try:
             if not client.connect():
                 raise ConnectionError("Cannot open serial port")
-            result = client.read_holding_registers(0, count=1, device_id=data[CONF_SLAVE_ID])
+            result = client.read_holding_registers(22, count=1, device_id=slave)
             if result.isError():
                 raise ConnectionError("No Modbus response from device")
         finally:
@@ -123,6 +129,10 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # NumberSelector returns float — cast to int for pymodbus
+            user_input[CONF_TCP_PORT] = int(user_input[CONF_TCP_PORT])
+            user_input[CONF_SLAVE_ID] = int(user_input[CONF_SLAVE_ID])
+
             await self.async_set_unique_id(
                 f"tcp_{user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]}_{user_input[CONF_SLAVE_ID]}"
             )
@@ -165,6 +175,8 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             user_input.setdefault(CONF_BAUDRATE, DEFAULT_BAUDRATE)
+            user_input[CONF_SLAVE_ID] = int(user_input[CONF_SLAVE_ID])
+            user_input[CONF_BAUDRATE] = int(user_input[CONF_BAUDRATE])
             await self.async_set_unique_id(
                 f"serial_{user_input[CONF_SERIAL_PORT]}_{user_input[CONF_SLAVE_ID]}"
             )
