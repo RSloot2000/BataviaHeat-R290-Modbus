@@ -35,7 +35,6 @@ _LOGGER = logging.getLogger(__name__)
 # All read via FC03 — confirmed: FC03 and FC04 return identical data on this device.
 # ~8 requests per cycle instead of ~25+ individual reads.
 _READ_GROUPS: list[tuple[int, int]] = [
-    (4, 1),       # HR[4]: heating target temp
     (22, 4),      # HR[22-25]: ambient, fin coil, suction, discharge temps
     (32, 2),      # HR[32-33]: low/high pressure
     (53, 2),      # HR[53-54]: pump target speed, flow rate
@@ -45,6 +44,7 @@ _READ_GROUPS: list[tuple[int, int]] = [
     (1283, 1),    # HR[1283]: compressor running
     (6402, 1),    # HR[6402]: max heating temperature
     (6426, 11),   # HR[6426-6436]: heating curve params
+    (6465, 1),    # HR[6465]: N01 power mode
 ]
 
 # Build lookup: address → (dict_key, reg_info) for fast dispatch after bulk read

@@ -61,7 +61,6 @@
       "compressor_running": { "name": "Compressor running" }
     },
     "number": {
-      "heating_target_temperature": { "name": "Heating target temperature" },
       "max_heating_temperature": { "name": "Max heating temperature" },
       "heating_curve_mode": { "name": "Heating curve mode" },
       "curve_outdoor_temp_high": { "name": "Curve outdoor temp high" },
@@ -73,6 +72,17 @@
       "unit_power": { "name": "Unit power" },
       "silent_mode": { "name": "Silent mode" },
       "silent_level_2": { "name": "Silent level 2" }
+    },
+    "select": {
+      "power_mode": {
+        "name": "Power mode",
+        "state": {
+          "standard": "Standard",
+          "powerful": "Powerful",
+          "eco": "Eco",
+          "auto": "Auto"
+        }
+      }
     },
     "climate": {
       "heat_pump": { "name": "Heat Pump" }

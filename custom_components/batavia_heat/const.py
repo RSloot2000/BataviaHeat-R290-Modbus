@@ -45,17 +45,9 @@ SENSOR_DISCONNECTED = (32834, 32836)  # 0x8042, 0x8044 → -3270.x°C
 
 # ── Holding registers (read/write) - FC03/FC06 ──
 HOLDING_REGISTERS: dict[int, dict] = {
-    # ─── Writable Setpoints ───
-    4: {
-        "name": "heating_target_temperature",
-        "device_class": "temperature",
-        "unit": "°C",
-        "scale": 0.1,
-        "min": 20.0,
-        "max": 60.0,
-        "entity_type": "number",
-        "icon": "mdi:thermometer",
-    },
+    # NOTE: HR[4] was originally mapped as "heating_target_temperature" but reads 0
+    # in practice. The actual setpoint used by the system is HR[6402] (M02 parameter).
+    #
     # NOTE: Holding register sensors (HR[5,72,74-76,187-189]) were removed after
     # overnight monitoring proved they are NOT maintained by the heat pump.
     # They showed 0 or nonsensical values throughout 9 hours of monitoring.
@@ -95,6 +87,22 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "binary_sensor",
         "icon": "mdi:heat-pump",
+    },
+
+    # ─── N-serie: System Configuration ───
+    6465: {
+        "name": "power_mode",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "icon": "mdi:lightning-bolt",
+        "options": {
+            0: "standard",
+            1: "powerful",
+            2: "eco",
+            3: "auto",
+        },
     },
 
     # ─── Stooklijn / Heating Curve Parameters (M-registers) ───
@@ -305,6 +313,8 @@ COILS: dict[int, dict] = {
         "off_coil": 1025,
         "entity_type": "switch",
         "icon": "mdi:power",
+        # HR[768] operational_status: >0 = unit running = ON
+        "state_register": {"type": "holding", "address": 768},
     },
     1073: {
         "name": "silent_mode",
@@ -319,6 +329,7 @@ COILS: dict[int, dict] = {
         "off_coil": 1075,
         "entity_type": "switch",
         "icon": "mdi:volume-low",
+        "requires": 1073,  # Only available when silent_mode is ON
     },
 }
 

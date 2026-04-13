@@ -25,8 +25,8 @@ COIL_UNIT_ON = 1024
 COIL_UNIT_OFF = 1025
 
 # Register addresses
-REG_TARGET_TEMP = 4       # HR[4]: Heating target temperature (°C, scale already applied)
-REG_CURRENT_TEMP = 136    # IR[136]: Water outlet temperature module (°C)
+REG_TARGET_TEMP = 6402    # HR[6402]: Max heating temperature / M02 (°C, scale=1)
+REG_CURRENT_TEMP = 776    # HR[776]: Water outlet temperature (°C, scale=0.1)
 REG_OP_STATUS = 768       # HR[768]: Operational status (0 = off, >0 = running)
 
 
@@ -59,21 +59,21 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
 
     def __init__(self, coordinator: BataviaHeatCoordinator) -> None:
         """Initialize the climate entity."""
-        super().__init__(coordinator, "holding", REG_TARGET_TEMP, {
+        super().__init__(coordinator, "holding", REG_OP_STATUS, {
             "name": "climate",
             "icon": "mdi:heat-pump",
         })
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the current water outlet temperature (IR[136])."""
+        """Return the current water outlet temperature (HR[776])."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get("input", {}).get(REG_CURRENT_TEMP)
+        return self.coordinator.data.get("holding", {}).get(REG_CURRENT_TEMP)
 
     @property
     def target_temperature(self) -> float | None:
-        """Return the target heating temperature (HR[4])."""
+        """Return the heating setpoint (HR[6402] = M02 parameter)."""
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("holding", {}).get(REG_TARGET_TEMP)
@@ -89,9 +89,9 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
         return HVACMode.OFF
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Set new target temperature via HR[4] (raw = temp × 10, scale 0.1)."""
+        """Set new target temperature via HR[6402] (scale=1, raw = temp)."""
         if (temp := kwargs.get("temperature")) is not None:
-            await self.coordinator.async_write_register(REG_TARGET_TEMP, int(temp * 10))
+            await self.coordinator.async_write_register(REG_TARGET_TEMP, int(temp))
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode by pulsing unit on/off coils."""
