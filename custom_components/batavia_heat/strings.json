@@ -35,6 +35,17 @@
       "already_configured": "This device is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BataviaHeat R290 Options",
+        "description": "Optionally select your electricity meter to enable COP sensors. Leave empty to disable COP sensors.",
+        "data": {
+          "energy_entity": "Electricity meter (kWh)"
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "ambient_temperature": { "name": "Ambient temperature" },
@@ -55,7 +66,13 @@
       "compressor_discharge_temperature": { "name": "Compressor discharge temperature" },
       "water_outlet_temperature": { "name": "Water outlet temperature" },
       "thermal_power": { "name": "Thermal power" },
-      "energy_delivered": { "name": "Energy delivered" }
+      "energy_delivered": { "name": "Energy delivered" },
+      "cop_current": { "name": "COP (current)" },
+      "cop_today": { "name": "COP today" },
+      "cop_week": { "name": "COP this week" },
+      "cop_month": { "name": "COP this month" },
+      "cop_year": { "name": "COP this year" },
+      "cop_alltime": { "name": "COP all time" }
     },
     "binary_sensor": {
       "compressor_running": { "name": "Compressor running" }

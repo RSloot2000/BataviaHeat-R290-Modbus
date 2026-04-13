@@ -2,13 +2,23 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-> **🚧 This project is in extremely early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
+> **🚧 This project is in early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
 
 Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via Modbus TCP or RTU (Serial).
+
+## Compatibility
+
+The BataviaHeat R290 is manufactured by **Newntide** and sold under various brand names. This integration will likely work with other Newntide-based heat pumps that share the same Modbus register map, such as:
+
+- BataviaHeat R290 3–8 kW (confirmed)
+- Other Newntide OEM/white-label rebrands with identical controller hardware
+
+If you have a Newntide-based heat pump from a different brand and can confirm compatibility, please [open an issue](https://github.com/RSloot2000/BataviaHeat-R290-Modbus/issues) so we can add it to the list. Or if you have the means, scan the registers yourself and help expand the project.
 
 ## Table of contents
 
 - [Features](#features)
+- [Compatibility](#compatibility)
 - [Hardware Requirements](#hardware-requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -16,6 +26,7 @@ Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc**
   - [Sensors](#sensors)
   - [Binary sensors](#binary-sensors)
   - [Switches](#switches)
+  - [Select entities](#select-entities)
   - [Number entities](#number-entities)
   - [Climate](#climate)
 - [COP calculation](#cop-calculation)
@@ -30,12 +41,15 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 ## Features
 
 - **Climate entity:** heating on/off and target temperature control via pulse-coils
-- **17 sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
+- **19 sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
+- **6 COP sensors:** built-in coefficient of performance tracking (current, today, week, month, year, all-time) — requires an external kWh meter entity
 - **1 binary sensor:** compressor running
+- **1 select entity:** power mode (standard / powerful / eco / auto)
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
-- **7 number entities:** heating target temperature and 6 heating curve (stooklijn) parameters
-- **5-second polling interval** via Modbus TCP or RTU (Serial)
+- **6 number entities:** heating curve (stooklijn) parameters and temperature limits
+- **10-second polling interval** via Modbus TCP or RTU (Serial)
 - **Dual connection support:** Modbus TCP (e.g. DR164 WiFi gateway) or Modbus RTU via USB RS-485 adapter
+- **Connection failure resilience:** COP calculations remain accurate after network outages
 
 ## Hardware Requirements
 
@@ -87,6 +101,15 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
    - **Slave ID:** Modbus device address (default: `1`)
    - **Baudrate:** Serial baudrate (default: `9600`, only change if needed)
 
+### Options (kWh meter for COP)
+
+After initial setup, you can optionally link an external kWh meter to enable COP sensors:
+
+1. Go to **Settings → Devices & Services**
+2. Find **BataviaHeat R290** and click **Configure**
+3. Select your electricity meter entity (must have `device_class: energy`)
+4. Save, the integration reloads automatically and creates six COP sensors
+
 ## Entities
 
 ### Sensors
@@ -112,6 +135,14 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 | Water outlet temperature | HR[776] | °C | System water outlet (from outdoor unit) |
 | Thermal power | calculated | kW | flow × ΔT × 4.186 / 3600 |
 | Energy delivered | integrated | kWh | Riemann sum of thermal power |
+| COP (current) | calculated | — | Real-time coefficient of performance¹ |
+| COP (today) | calculated | — | Average COP for today¹ |
+| COP (this week) | calculated | — | Average COP for the current week¹ |
+| COP (this month) | calculated | — | Average COP for the current month¹ |
+| COP (this year) | calculated | — | Average COP for the current year¹ |
+| COP (all time) | calculated | — | Average COP since installation¹ |
+
+> ¹ COP sensors are only created when an external kWh meter entity is configured in the integration options. See [COP calculation](#cop-calculation).
 
 > HR[768], HR[773] and HR[776] go to 0 when the compressor is off. This is normal behaviour.
 
@@ -131,11 +162,16 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 
 Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and OFF coil; there is no toggle. Coil state is not readable; the UI uses assumed state.
 
+### Select entities
+
+| Entity | Register | Options | Description |
+|--------|----------|---------|-------------|
+| Power mode | HR[6465] | Standard, Powerful, Eco, Auto | Operating power mode |
+
 ### Number entities
 
 | Entity | Register | Range | Description |
 |--------|----------|-------|-------------|
-| Heating target temperature | HR[4] | 20–60 °C | Central heating setpoint |
 | Max heating temperature | HR[6402] | 0–85 °C | Maximum heating temperature |
 | Heating curve mode | HR[6426] | 0–17 | Heating curve preset selector |
 | Curve outdoor temp high | HR[6433] | −25–35 °C | Outdoor temperature at which minimum water temp applies |
@@ -153,24 +189,33 @@ The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M]
 
 ## COP calculation
 
-This integration provides **thermal power** (kW) and **energy delivered** (kWh) sensors. Electrical consumption is **not** read from the heat pump since the pump only provides a power reading for the compressor and not the whole system. An external kWh meter (e.g. HomeWizard) is needed for this function.
+This integration has **built-in COP (Coefficient of Performance) sensors**. Thermal power and energy are calculated from Modbus data (flow rate × ΔT). Electrical consumption is **not** available from the heat pump itself, it only reports compressor power, not total system consumption. An external kWh meter (e.g. HomeWizard) is required for COP calculation.
 
-To calculate COP, create a template sensor in Home Assistant:
+### Setup
 
-```yaml
-template:
-  - sensor:
-      - name: "Heat Pump COP"
-        unit_of_measurement: ""
-        state: >
-          {% set delivered = states('sensor.batavia_heat_energy_delivered') | float(0) %}
-          {% set consumed = states('sensor.your_kwh_sensor') | float(0) %}
-          {% if consumed > 0 %}
-            {{ (delivered / consumed) | round(2) }}
-          {% else %}
-            unknown
-          {% endif %}
-```
+1. Go to **Settings → Devices & Services**
+2. Find the **BataviaHeat R290** integration and click **Configure**
+3. Select your electricity meter entity (must have `device_class: energy`)
+4. Save — six COP sensors will be created automatically
+
+### COP sensors
+
+| Sensor | Description |
+|--------|-------------|
+| COP (current) | Real-time COP based on instantaneous thermal and electrical power |
+| COP (today) | Average COP for today |
+| COP (this week) | Average COP for the current week |
+| COP (this month) | Average COP for the current month |
+| COP (this year) | Average COP for the current year |
+| COP (all time) | Average COP since installation |
+
+Period sensors are **install-date aware**: if the integration is installed mid-month, the first month's COP only counts from the installation date onwards.
+
+### Connection failure resilience
+
+Both thermal and electrical energy are accumulated using the same time-gap guard. If the connection drops for more than one hour, both sides pause simultaneously. This prevents skewed COP values after network outages, the ratio stays correct because neither side accumulates energy during the gap.
+
+> **No kWh meter?** Leave the options field empty. The integration works without COP sensors; you can always configure the meter later.
 
 ## Troubleshooting
 
@@ -199,7 +244,8 @@ template:
 
 The [`docs/`](docs/) folder contains reference documentation for the BataviaHeat R290:
 
-- **[tablet-parameters.md](docs/tablet-parameters.md)** - Complete list of all installer parameters (N/M/F/P/G series) with HR-addresses, ranges, default values, error codes (E/F series), and optimization tips
+- **[tablet-parameters.md](docs/tablet-parameters.md)** (NL) — Complete list of all installer parameters (N/M/F/P/G series) with HR-addresses, ranges, default values, error codes (E/F series), and optimization tips
+- **[tablet-parameters-en.md](docs/tablet-parameters-en.md)** (EN) — Same content in English
 
 ## Contributing
 
@@ -212,7 +258,18 @@ This integration was built by reverse-engineering the Modbus protocol. Contribut
 
 ## RS-485 adapter installation
 
-> **🚧 Work in progress** - detailed instructions and photos will be added soon.
+### Wiring
+
+The heat pump's RS-485 connector uses a 4-wire cable with the following colour coding:
+
+| Wire colour | Function |
+|-------------|----------|
+| 🔴 Red | 12 V |
+| ⚫ Black | GND (bus + DC) |
+| ⚪ White | A |
+| 🟢 Green | B |
+
+Connect **White (A)** to the **A+** terminal and **Green (B)** to the **B−** terminal on your RS-485 gateway or USB adapter. The red and black wires carry 12 V DC power and are **not** needed for the Modbus data connection.
 
 ## License
 

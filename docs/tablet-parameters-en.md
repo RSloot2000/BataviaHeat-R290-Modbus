@@ -34,7 +34,7 @@
 > **Note: Non-linear HR mapping!** M00-M09 use a simple offset (HR = 6400 + Mxx).
 > From M10 onwards the mapping shifts by +15: HR = 6400 + Mxx + 15.
 > This is because G01-G04 occupy HR[6412-6415] (overlapping with M12-M15 simple offset).
-> HR[6411] is NOT M11.
+> HR[6411] is NOT M11 — confirmed in scan 4 (March 2026).
 
 | Code | Parameter | Unit | Range / Options | HR address |
 |------|-----------|------|-----------------|------------|
@@ -247,6 +247,10 @@
 | 1075 | Silent level 1 (low) | 0xFF00 | Sets noise reduction to level 1 |
 | 1076 | Silent level 2 (high) | 0xFF00 | Sets noise reduction to level 2 |
 
+> **⚠ No hardware feedback:** There is no readable status register for silent mode.
+> HR[36] and HR[1309] were investigated but go to 65535 (not available) when toggled.
+> See [Silent mode status register — investigation](#silent-mode-status-register--investigation-april-2026) for details.
+
 ### Tablet Write Registers (FC06/FC16)
 
 | Address | Function | Value | Notes |
@@ -321,7 +325,7 @@
 
 ## Optimization Overview (17 March 2026)
 
-> **Situation:** Well-insulated terraced house (1989, 108 m², mid-terrace), underfloor heating + radiators, central heating only (no DHW), thermostat at 19°C.
+> **Situation:** Well-insulated terraced house, underfloor heating + radiators, central heating only (no DHW).
 > **Problem:** Pump runs continuously, heats water to 50°C, cycles every hour - even without heating demand.
 
 ### Changes Made
@@ -401,3 +405,204 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 - **Longer compressor cycles** (38 min instead of ~12 min = less wear, better efficiency)
 - **Lower water temperature** (28-29°C instead of 50°C = much higher COP)
 - **Higher outlet temp** (30.1°C instead of 23.6°C - more effective due to longer cycles)
+
+---
+
+## Full Modbus Register Map
+
+> **All verified registers** — discovered via Modbus scanner (March 2026), overnight monitoring (9+ hours),
+> passive RS-485 bus sniffer (April 2026) and HACS integration development.
+
+### Critical Discovery: FC03 ≠ FC04 (April 2026)
+
+> **FC03 (Read Holding Registers) and FC04 (Read Input Registers) are NOT interchangeable for all addresses.**
+>
+> | Address Range | FC03 vs FC04 | Status |
+> |---------------|-------------|--------|
+> | 0–100 | Identical data | ✓ Verified |
+> | 135+ | **Different** — FC03 returns incorrect values | ⚠ Critical |
+>
+> **Example of incorrect FC03 data (addresses 135+):**
+> - IR[135] plate HX inlet: FC03 → 126°C ❌ / FC04 → correct value ✓
+> - IR[136] plate HX outlet: FC03 → 0°C ❌ / FC04 → correct value ✓
+> - This caused thermal power = −351 kW in the first version of the integration
+>
+> **Solution:** All input registers are now read exclusively via FC04 in the HACS integration.
+
+### Special Marker Values
+
+| Value | Hex | Meaning |
+|-------|-----|---------|
+| 65535 | 0xFFFF | Register/sensor not available on this device |
+| 32834 | 0x8042 | Sensor disconnected (−3270.2°C after ×0.1 scaling, signed) |
+| 32836 | 0x8044 | Sensor disconnected (−3270.4°C after ×0.1 scaling, signed) |
+
+### Input Registers — FC04 (read-only, live sensor data)
+
+> These registers contain reliable real-time data from the heat pump hardware.
+> Scale values are verified against tablet display.
+
+| Address | Parameter | Unit | Scale | Tablet Code | Notes |
+|---------|-----------|------|-------|-------------|-------|
+| IR[22] | Ambient temperature | °C | ×0.1 | T01 | Outdoor temperature |
+| IR[23] | Fin coil (evaporator) temperature | °C | ×0.1 | — | Lower than ambient when compressor running (normal) |
+| IR[24] | Suction temperature | °C | ×0.1 | — | Refrigerant compressor inlet |
+| IR[25] | Discharge temperature | °C | ×0.1 | — | Refrigerant compressor outlet |
+| IR[32] | Low pressure | bar | ×0.1 | — | Refrigerant evaporator side |
+| IR[33] | High pressure | bar | ×0.1 | — | Refrigerant condenser side |
+| IR[53] | Pump target speed | rpm | ×1 | — | Water pump target speed |
+| IR[54] | Pump flow rate | L/h | ×1 | — | Water flow; source for thermal power |
+| IR[66] | Pump control signal | % | ×0.1 | — | PWM output to pump |
+| IR[135] | Plate HX water inlet temp | °C | ×0.1 | — | ⚠ FC04 ONLY! Module 0# |
+| IR[136] | Plate HX water outlet temp | °C | ×0.1 | — | ⚠ FC04 ONLY! Source for thermal power |
+| IR[137] | Module water outlet temp | °C | ×0.1 | T30? | Module 0# |
+| IR[138] | Module ambient temperature | °C | ×0.1 | — | Often 0 — possibly redundant with IR[22] |
+| IR[142] | Pump feedback signal | % | ×0.1 | — | Speed feedback from pump |
+
+### Holding Registers — FC03 (operational status)
+
+> Read-only status registers from the outdoor unit. Go to 0 when compressor is off — this is normal.
+
+| Address | Parameter | Unit | Scale | Tablet Code | Notes |
+|---------|-----------|------|-------|-------------|-------|
+| HR[768] | Operational status | — | ×1 | T12 | >0 = unit running; state_register for unit_power switch |
+| HR[773] | Compressor discharge temperature | °C | ×0.1 | — | Discharge temp (HR copy) |
+| HR[776] | Water outlet temperature | °C | ×0.1 | — | System water outlet |
+| HR[816] | Water temperature target | °C | ×0.1 | T17 | Dynamic when weather curve is active |
+| HR[1283] | Compressor running | — | ×1 | — | 0=off, >0=on; binary_sensor in integration |
+
+### Holding Registers — FC06 (writable, setpoints)
+
+> Configuration parameters that can be written via the integration or tablet.
+> See M-series and N-series tables above for full descriptions.
+
+| Address | Parameter | Code | Range | In Integration |
+|---------|-----------|------|-------|----------------|
+| HR[6402] | Max heating temperature | M02 | 0–85°C | ✓ number entity |
+| HR[6426] | Zone A heating curve | M11 | 0–17 | ✓ number entity |
+| HR[6433] | Custom heating ambient temp 1 | M18 | −25 – 35°C | ✓ number entity |
+| HR[6434] | Custom heating ambient temp 2 | M19 | −25 – 35°C | ✓ number entity |
+| HR[6435] | Custom heating outlet temp 1 | M20 | 25–65°C | ✓ number entity |
+| HR[6436] | Custom heating outlet temp 2 | M21 | 25–65°C | ✓ number entity |
+| HR[6465] | Power mode | N01 | 0–3 | ✓ select entity |
+
+### Holding Registers — NOT reliable as sensor
+
+> Overnight monitoring (9+ hours without tablet) showed these registers return 0 or inconsistent values.
+> They are likely only populated when the tablet app is active.
+
+| Address | Original Mapping | Status |
+|---------|-----------------|--------|
+| HR[1], HR[4], HR[5] | Water outlet, target, tank temp | ⚠ Only reliable with tablet active |
+| HR[72], HR[74-76] | Temperature sensors | ❌ Removed from integration |
+| HR[187-189] | Energy sensors | ❌ Removed from integration |
+| HR[41] | Compressor power (kW) | ❌ Removed — external kWh meter as replacement |
+| HR[163-165] | 16-bit Wh counters | ❌ Overflow every ~65.5 kWh (~12 days) — unusable |
+
+### Coils — FC05 (pulse commands, write-only)
+
+> Summary of all discovered coils. None of these are readable (FC01/FC02).
+> Each write action is a pulse (0xFF00). There is no toggle — each direction has a separate coil.
+
+| Coil | Function | State Register | In Integration |
+|------|----------|----------------|----------------|
+| 1024 | Unit ON | HR[768] > 0 = on | ✓ switch (unit_power) |
+| 1025 | Unit OFF | HR[768] = 0 = off | ✓ (off_coil) |
+| 1073 | Silent mode ON | None ⚠ | ✓ switch (silent_mode, RestoreEntity) |
+| 1074 | Silent mode OFF | None ⚠ | ✓ (off_coil) |
+| 1075 | Silent level 1 (low) | None ⚠ | ✓ (off_coil for silent_level_2) |
+| 1076 | Silent level 2 (high) | None ⚠ | ✓ switch (silent_level_2, RestoreEntity) |
+
+### Calculated Sensors (not from Modbus register)
+
+| Sensor | Formula | Source Registers | Unit |
+|--------|---------|------------------|------|
+| Thermal power | `flow × (outlet − inlet) × 4.186 / 3600` | IR[54], IR[136], IR[135] | kW |
+| Delivered heat | Riemann sum integration on thermal power | (calculated in HA) | kWh |
+
+> **Thermal power protection:**
+> - Values with |result| > 30 kW → `None` (unrealistic for 3-8kW pump)
+> - Negative values → `0.0` (clamp; in heating mode thermal power must be ≥ 0)
+
+### Not Yet Scanned Ranges
+
+| Range | Status | Notes |
+|-------|--------|-------|
+| HR[300-699] | ⬜ Not scanned | Gateway lockup during large scans |
+| HR[1400-6399] | ⬜ Not scanned | Possible silent mode level register |
+| Discrete Inputs (FC02) | ⬜ Not scanned | O-series and S-series status possibly here |
+
+---
+
+## Silent Mode Status Register — Investigation (April 2026)
+
+> **Goal:** Find a hardware feedback register for silent mode (on/off and level 1/2).
+
+### Investigated Candidates
+
+| Register | Method | Result |
+|----------|--------|--------|
+| HR[36] | 3-snapshot scan + targeted verification | Goes from 0 → 65535 (not available) on coil toggle |
+| HR[1309] | 3-snapshot scan + targeted verification | Goes from 0 → 65535 (not available) on coil toggle |
+| HR[768] | Monitored during silent toggle | Stable at 4 — no change |
+| HR[1283] | Monitored during silent toggle | Stable at 0 — no change |
+
+### Conclusion
+
+**No usable hardware feedback register found for silent mode.**
+
+The heat pump has no register that reflects the current silent mode status.
+The coils (1073-1076) are write-only pulse commands without a readable counterpart.
+The HACS integration therefore uses `RestoreEntity` (HA persistent state) for the silent_mode and silent_level_2 switches.
+
+Possible future location: range HR[300-699] or HR[1400-6399] (not yet scanned).
+
+---
+
+## HACS Integration Architecture
+
+> **Repository:** [`RSloot2000/BataviaHeat-R290-Modbus`](https://github.com/RSloot2000/BataviaHeat-R290-Modbus)
+> **Domain:** `batavia_heat` | **pymodbus:** ≥3.6.0
+
+### Platforms
+
+| Platform | Entities | Source |
+|----------|----------|--------|
+| sensor | All IR and HR sensors + thermal_power + energy + COP | FC04 + FC03 |
+| binary_sensor | compressor_running (HR[1283]) | FC03 |
+| switch | unit_power, silent_mode, silent_level_2 | FC05 coils |
+| number | M02, M11, M18-M21 (heating curve parameters) | FC06 |
+| select | N01 power_mode (HR[6465]) | FC06 |
+| climate | Target temp (HR[6402]), current temp (HR[776]), status (HR[768]) | FC03/FC06 |
+
+### Bulk-Read Strategy (coordinator.py)
+
+> ~10 Modbus requests per poll cycle (every 10s), split by function code.
+
+**FC03 — Holding registers:**
+
+| Group | Addresses | Registers |
+|-------|-----------|-----------|
+| 1 | HR[768-776] | 9 registers (operational status block) |
+| 2 | HR[1283] | 1 register (compressor running) |
+| 3 | HR[6402] | 1 register (max heating temp) |
+| 4 | HR[6426-6436] | 11 registers (heating curve parameters) |
+| 5 | HR[6465] | 1 register (power mode) |
+
+**FC04 — Input registers:**
+
+| Group | Addresses | Registers |
+|-------|-----------|-----------|
+| 1 | IR[22-25] | 4 registers (temperatures) |
+| 2 | IR[32-33] | 2 registers (pressures) |
+| 3 | IR[53-54] | 2 registers (pump) |
+| 4 | IR[66] | 1 register (pump control signal) |
+| 5 | IR[135-142] | 8 registers (module temps + pump feedback) |
+
+### Stability Measures
+
+- **`_reset_client()`**: Force-close TCP connection on any error → fresh connection on next poll
+- **Timeout 5s**: Sufficient margin for Modbus TCP gateway latency
+- **Thermal power clamp**: |result| > 30kW → None; negative → 0.0
+- **RestoreEntity**: silent_mode and silent_level_2 restore state after HA restart
+- **COP gap guard**: During connection outage > 1 hour, both thermal and electrical accumulation pause symmetrically

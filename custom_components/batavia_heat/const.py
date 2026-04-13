@@ -15,6 +15,7 @@ CONF_SLAVE_ID = "slave_id"
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_SERIAL_PORT = "serial_port"
 CONF_BAUDRATE = "baudrate"
+CONF_ENERGY_ENTITY = "energy_entity"
 
 CONNECTION_TCP = "tcp"
 CONNECTION_SERIAL = "serial"

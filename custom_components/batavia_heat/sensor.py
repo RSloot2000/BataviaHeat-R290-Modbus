@@ -23,7 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import CALCULATED_SENSORS, DOMAIN, INPUT_REGISTERS, HOLDING_REGISTERS
+from .const import CALCULATED_SENSORS, CONF_ENERGY_ENTITY, DOMAIN, INPUT_REGISTERS, HOLDING_REGISTERS
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -85,6 +85,15 @@ async def async_setup_entry(
         power_source="thermal_power",
         power_unit_watts=False,
     ))
+
+    # COP sensors — only created when an energy entity is configured
+    energy_entity_id = entry.options.get(CONF_ENERGY_ENTITY, "")
+    if energy_entity_id:
+        entities.append(BataviaHeatCOPCurrentSensor(coordinator, energy_entity_id))
+        for period in ("today", "week", "month", "year", "alltime"):
+            entities.append(
+                BataviaHeatCOPPeriodSensor(coordinator, period, energy_entity_id)
+            )
 
     async_add_entities(entities)
 
@@ -311,6 +320,317 @@ class BataviaHeatEnergySensor(RestoreEntity, SensorEntity):
 
         def _on_update() -> None:
             self._integrate()
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            self.coordinator.async_add_listener(_on_update)
+        )
+
+
+def _compute_thermal_power_kw(data: dict) -> float | None:
+    """Compute thermal power in kW from coordinator data."""
+    flow = data.get("input", {}).get(54)
+    inlet = data.get("input", {}).get(135)
+    outlet = data.get("input", {}).get(136)
+    if flow is None or inlet is None or outlet is None:
+        return None
+    if flow <= 0:
+        return 0.0
+    result = flow * (outlet - inlet) * 4.186 / 3600
+    if abs(result) > 30:
+        return None
+    return max(result, 0.0)
+
+
+class BataviaHeatCOPCurrentSensor(SensorEntity):
+    """Instantaneous COP derived from thermal power and electrical power.
+
+    Electrical power is computed from the rate of change of the external
+    kWh meter. COP = thermal_power_kw / electrical_power_kw.
+    """
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:speedometer"
+    _attr_suggested_display_precision = 1
+
+    def __init__(
+        self,
+        coordinator: BataviaHeatCoordinator,
+        energy_entity_id: str,
+    ) -> None:
+        """Initialize the instantaneous COP sensor."""
+        self.coordinator = coordinator
+        self._energy_entity_id = energy_entity_id
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cop_current"
+        self._attr_translation_key = "cop_current"
+        self._cop_value: float | None = None
+        self._prev_kwh: float | None = None
+        self._prev_time: datetime | None = None
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        from .const import MANUFACTURER, MODEL
+        from homeassistant.helpers.device_registry import DeviceInfo
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            name="BataviaHeat R290",
+            manufacturer=MANUFACTURER,
+            model=MODEL,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success and self.coordinator.data is not None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current COP."""
+        return self._cop_value
+
+    def _update_cop(self) -> None:
+        """Compute instantaneous COP from thermal power and meter delta."""
+        if self.coordinator.data is None:
+            return
+        thermal_kw = _compute_thermal_power_kw(self.coordinator.data)
+
+        # Derive electrical power from kWh meter rate of change
+        state = self.hass.states.get(self._energy_entity_id)
+        electrical_kw: float | None = None
+        if state and state.state not in ("unknown", "unavailable"):
+            try:
+                current_kwh = float(state.state)
+            except (ValueError, TypeError):
+                current_kwh = None
+
+            if current_kwh is not None:
+                now = datetime.now(timezone.utc)
+                if self._prev_kwh is not None and self._prev_time is not None:
+                    dt_hours = (now - self._prev_time).total_seconds() / 3600.0
+                    if 0 < dt_hours < 0.5:
+                        delta = current_kwh - self._prev_kwh
+                        if delta >= 0:
+                            electrical_kw = delta / dt_hours
+                self._prev_kwh = current_kwh
+                self._prev_time = now
+
+        if thermal_kw is not None and electrical_kw is not None and electrical_kw > 0.05:
+            cop = thermal_kw / electrical_kw
+            self._cop_value = round(cop, 1) if cop <= 15 else None
+        elif thermal_kw is not None and thermal_kw < 0.01:
+            self._cop_value = 0.0
+        else:
+            self._cop_value = None
+
+    async def async_added_to_hass(self) -> None:
+        """Register update listener."""
+        self._prev_time = datetime.now(timezone.utc)
+
+        def _on_update() -> None:
+            self._update_cop()
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            self.coordinator.async_add_listener(_on_update)
+        )
+
+
+class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
+    """COP sensor for a specific time period (today/week/month/year/alltime).
+
+    Accumulates thermal energy via Riemann integration and reads electrical
+    energy from an external kWh meter. Handles install-date awareness: if
+    installed mid-period, only counts from the installation moment.
+    """
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:speedometer"
+    _attr_suggested_display_precision = 1
+
+    def __init__(
+        self,
+        coordinator: BataviaHeatCoordinator,
+        period: str,
+        energy_entity_id: str,
+    ) -> None:
+        """Initialize the period COP sensor."""
+        self.coordinator = coordinator
+        self._period = period
+        self._energy_entity_id = energy_entity_id
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cop_{period}"
+        self._attr_translation_key = f"cop_{period}"
+
+        self._accumulated_thermal: float = 0.0
+        self._accumulated_electrical: float = 0.0
+        self._prev_electrical_kwh: float | None = None
+        self._install_date: datetime | None = None
+        self._period_key: str | None = None
+        self._last_update: datetime | None = None
+        self._cop_value: float | None = None
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        from .const import MANUFACTURER, MODEL
+        from homeassistant.helpers.device_registry import DeviceInfo
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            name="BataviaHeat R290",
+            manufacturer=MANUFACTURER,
+            model=MODEL,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success and self.coordinator.data is not None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the COP for this period."""
+        return self._cop_value
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose metadata for state restoration and diagnostics."""
+        return {
+            "install_date": self._install_date.isoformat() if self._install_date else None,
+            "period": self._period,
+            "period_key": self._period_key,
+            "accumulated_thermal_kwh": round(self._accumulated_thermal, 6),
+            "accumulated_electrical_kwh": round(self._accumulated_electrical, 6),
+        }
+
+    @staticmethod
+    def _period_key_for(period: str, dt: datetime) -> str:
+        """Return the period key string for a given datetime (local time)."""
+        local = dt.astimezone()
+        if period == "today":
+            return local.strftime("%Y-%m-%d")
+        if period == "week":
+            iso = local.isocalendar()
+            return f"{iso[0]}-W{iso[1]:02d}"
+        if period == "month":
+            return local.strftime("%Y-%m")
+        if period == "year":
+            return local.strftime("%Y")
+        return "alltime"
+
+    def _read_electrical_kwh(self) -> float | None:
+        """Read current kWh value from the external energy entity."""
+        state = self.hass.states.get(self._energy_entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
+
+    def _reset_period(self) -> None:
+        """Reset accumulated values for a new period."""
+        self._accumulated_thermal = 0.0
+        self._accumulated_electrical = 0.0
+        self._prev_electrical_kwh = self._read_electrical_kwh()
+        self._cop_value = None
+
+    def _update(self) -> None:
+        """Accumulate thermal and electrical energy and compute period COP.
+
+        Both sides use the same time-gap guard (< 1 hour) so that a
+        connection outage causes both accumulators to pause equally.
+        This prevents the COP from being skewed when the kWh meter
+        keeps counting but thermal data is missing.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Check for period rollover
+        new_key = self._period_key_for(self._period, now)
+        if self._period_key is not None and new_key != self._period_key:
+            self._reset_period()
+        self._period_key = new_key
+
+        # Determine if this interval is valid (gap < 1 hour)
+        valid_interval = False
+        dt_hours = 0.0
+        if self._last_update is not None:
+            dt_hours = (now - self._last_update).total_seconds() / 3600.0
+            valid_interval = 0 < dt_hours < 1
+
+        # Accumulate thermal energy (Riemann integration)
+        if valid_interval and self.coordinator.data is not None:
+            thermal_kw = _compute_thermal_power_kw(self.coordinator.data) or 0.0
+            self._accumulated_thermal += thermal_kw * dt_hours
+
+        # Accumulate electrical energy (delta from kWh meter, same guard)
+        current_electrical = self._read_electrical_kwh()
+        if current_electrical is not None:
+            if valid_interval and self._prev_electrical_kwh is not None:
+                delta = current_electrical - self._prev_electrical_kwh
+                if delta >= 0:
+                    self._accumulated_electrical += delta
+            self._prev_electrical_kwh = current_electrical
+
+        self._last_update = now
+
+        # Calculate COP
+        if self._accumulated_electrical > 0.01:
+            cop = self._accumulated_thermal / self._accumulated_electrical
+            self._cop_value = round(cop, 1) if cop <= 15 else None
+        elif self._accumulated_thermal < 0.001:
+            self._cop_value = 0.0
+        else:
+            self._cop_value = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore state and register update listener."""
+        if (last_state := await self.async_get_last_state()) is not None:
+            attrs = last_state.attributes or {}
+
+            # Restore install date
+            if install_str := attrs.get("install_date"):
+                try:
+                    self._install_date = datetime.fromisoformat(install_str)
+                except (ValueError, TypeError):
+                    pass
+
+            # Restore period data only if same period is still active
+            saved_key = attrs.get("period_key")
+            current_key = self._period_key_for(self._period, datetime.now(timezone.utc))
+
+            if saved_key == current_key:
+                try:
+                    self._accumulated_thermal = float(
+                        attrs.get("accumulated_thermal_kwh", 0)
+                    )
+                except (ValueError, TypeError):
+                    self._accumulated_thermal = 0.0
+                try:
+                    self._accumulated_electrical = float(
+                        attrs.get("accumulated_electrical_kwh", 0)
+                    )
+                except (ValueError, TypeError):
+                    self._accumulated_electrical = 0.0
+
+                if last_state.state not in (None, "unknown", "unavailable"):
+                    try:
+                        self._cop_value = float(last_state.state)
+                    except (ValueError, TypeError):
+                        pass
+
+        # Set install date on first ever start
+        if self._install_date is None:
+            self._install_date = datetime.now(timezone.utc)
+
+        self._period_key = self._period_key_for(
+            self._period, datetime.now(timezone.utc)
+        )
+        self._last_update = datetime.now(timezone.utc)
+
+        def _on_update() -> None:
+            self._update()
             self.async_write_ha_state()
 
         self.async_on_remove(

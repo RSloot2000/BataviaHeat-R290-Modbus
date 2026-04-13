@@ -34,7 +34,7 @@
 > **Let op: Non-lineaire HR-mapping!** M00-M09 gebruiken simpele offset (HR = 6400 + Mxx).
 > Vanaf M10 verschuift de mapping met +15: HR = 6400 + Mxx + 15.
 > Dit komt doordat G01-G04 op HR[6412-6415] zitten (overlap met M12-M15 simpele offset).
-> HR[6411] is NIET M11.
+> HR[6411] is NIET M11 — bewezen in scan 4 (maart 2026).
 
 | Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
 |------|-----------|---------|-----------------|----------|
@@ -247,6 +247,10 @@
 | 1075 | Stil niveau 1 (laag) | 0xFF00 | Zet dempniveau naar 1 |
 | 1076 | Stil niveau 2 (hoog) | 0xFF00 | Zet dempniveau naar 2 |
 
+> **⚠ Geen hardware feedback:** Er is geen uitleesbaar statusregister voor stille modus.
+> HR[36] en HR[1309] werden onderzocht maar gaan naar 65535 (niet beschikbaar) bij toggle.
+> Zie [Stille modus status register — onderzoek](#stille-modus-status-register--onderzoek-april-2026) voor details.
+
 ### Tablet schrijfregisters (FC06/FC16)
 
 | Adres | Functie | Waarde | Opmerkingen |
@@ -321,7 +325,7 @@
 
 ## Optimalisatie-overzicht (17 maart 2026)
 
-> **Situatie:** Goed geïsoleerd rijhuis (1989, 108m², midden in rij), vloerverwarming + radiatoren, alleen CV (geen DHW), thermostaat op 19°C.
+> **Situatie:** Goed geïsoleerd rijhuis, vloerverwarming + radiatoren, alleen CV (geen DHW).
 > **Probleem:** Pomp draait continu, verwarmt water naar 50°C, cycleert elk uur — ook zonder warmtevraag.
 
 ### Doorgevoerde wijzigingen
@@ -401,3 +405,204 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 - **Langere compressorcycli** (38 min i.p.v. ~12 min = minder slijtage, beter rendement)
 - **Lagere watertemperatuur** (28-29°C i.p.v. 50°C = veel hogere COP)
 - **Hogere outlet temp** (30,1°C i.p.v. 23,6°C — effectiever dankzij langere cycli)
+
+---
+
+## Volledige Modbus Register Map
+
+> **Alle geverifieerde registers** — ontdekt via Modbus scanner (maart 2026), overnacht-monitoring (9+ uur),
+> passieve RS-485 bus-sniffer (april 2026) en HACS integratie-ontwikkeling.
+
+### Kritieke ontdekking: FC03 ≠ FC04 (april 2026)
+
+> **FC03 (Read Holding Registers) en FC04 (Read Input Registers) zijn NIET uitwisselbaar voor alle adressen.**
+>
+> | Adresbereik | FC03 vs FC04 | Status |
+> |-------------|-------------|--------|
+> | 0–100 | Identieke data | ✓ Geverifieerd |
+> | 135+ | **Verschillend** — FC03 geeft foutieve waarden | ⚠ Kritiek |
+>
+> **Voorbeeld foutieve FC03 data (adressen 135+):**
+> - IR[135] plate HX inlet: FC03 → 126°C ❌ / FC04 → correcte waarde ✓
+> - IR[136] plate HX outlet: FC03 → 0°C ❌ / FC04 → correcte waarde ✓
+> - Dit veroorzaakte thermal power = −351 kW in de eerste versie van de integratie
+>
+> **Oplossing:** Alle input registers worden nu exclusief via FC04 gelezen in de HACS integratie.
+
+### Speciale markerwaarden
+
+| Waarde | Hex | Betekenis |
+|--------|-----|-----------|
+| 65535 | 0xFFFF | Register/sensor niet beschikbaar op dit apparaat |
+| 32834 | 0x8042 | Sensor losgekoppeld (−3270.2°C na ×0.1 schaling, signed) |
+| 32836 | 0x8044 | Sensor losgekoppeld (−3270.4°C na ×0.1 schaling, signed) |
+
+### Input Registers — FC04 (alleen-lezen, live sensordata)
+
+> Deze registers bevatten betrouwbare real-time data van de warmtepomp hardware.
+> Schaalwaarden zijn geverifieerd tegen tabletweergave.
+
+| Adres | Parameter | Eenheid | Schaal | Tablet code | Opmerkingen |
+|-------|-----------|---------|--------|-------------|-------------|
+| IR[22] | Omgevingstemperatuur | °C | ×0.1 | T01 | Buitentemperatuur |
+| IR[23] | Vincoil (verdamper) temperatuur | °C | ×0.1 | — | Lager dan ambient bij draaiende compressor (normaal) |
+| IR[24] | Zuigtemperatuur | °C | ×0.1 | — | Koelmiddel inlaat compressor |
+| IR[25] | Uitlaattemperatuur (discharge) | °C | ×0.1 | — | Koelmiddel uitlaat compressor |
+| IR[32] | Lage druk | bar | ×0.1 | — | Koelmiddel verdampzijde |
+| IR[33] | Hoge druk | bar | ×0.1 | — | Koelmiddel condenszijde |
+| IR[53] | Pomp doelsnelheid | rpm | ×1 | — | Waterpomp target speed |
+| IR[54] | Pomp debiet (flowrate) | L/h | ×1 | — | Waterdoorstroming; bron voor thermal power |
+| IR[66] | Pomp regelsignaal | % | ×0.1 | — | PWM output naar pomp |
+| IR[135] | Platenwisselaar water inlaat temp. | °C | ×0.1 | — | ⚠ ALLEEN via FC04! Module 0# |
+| IR[136] | Platenwisselaar water uitlaat temp. | °C | ×0.1 | — | ⚠ ALLEEN via FC04! Bron voor thermal power |
+| IR[137] | Module water uitlaat temp. | °C | ×0.1 | T30? | Module 0# |
+| IR[138] | Module omgevingstemperatuur | °C | ×0.1 | — | Vaak 0 — mogelijk redundant met IR[22] |
+| IR[142] | Pomp feedback signaal | % | ×0.1 | — | Terugmelding snelheid van pomp |
+
+### Holding Registers — FC03 (operationele status)
+
+> Alleen-lezen statusregisters van de buitenunit. Gaan naar 0 wanneer compressor uit staat — dit is normaal.
+
+| Adres | Parameter | Eenheid | Schaal | Tablet code | Opmerkingen |
+|-------|-----------|---------|--------|-------------|-------------|
+| HR[768] | Operationele status | — | ×1 | T12 | >0 = unit draait; state_register voor unit_power switch |
+| HR[773] | Compressor uitlaattemperatuur | °C | ×0.1 | — | Discharge temp (HR-kopie) |
+| HR[776] | Water uitlaattemperatuur | °C | ×0.1 | — | Systeemwater uitlaat |
+| HR[816] | Watertemperatuur target | °C | ×0.1 | T17 | Dynamisch bij actieve weercurve |
+| HR[1283] | Compressor draait | — | ×1 | — | 0=uit, >0=aan; binary_sensor in integratie |
+
+### Holding Registers — FC06 (schrijfbaar, setpoints)
+
+> Configuratieparameters die via de integratie of tablet geschreven kunnen worden.
+> Zie M-serie en N-serie tabellen hierboven voor volledige beschrijvingen.
+
+| Adres | Parameter | Code | Bereik | In integratie |
+|-------|-----------|------|--------|---------------|
+| HR[6402] | Max. verwarmingstemperatuur | M02 | 0–85°C | ✓ number entity |
+| HR[6426] | Zone A verwarmingscurve | M11 | 0–17 | ✓ number entity |
+| HR[6433] | Custom verw. omgevingstemp. 1 | M18 | −25 – 35°C | ✓ number entity |
+| HR[6434] | Custom verw. omgevingstemp. 2 | M19 | −25 – 35°C | ✓ number entity |
+| HR[6435] | Custom verw. uitlaattemp. 1 | M20 | 25–65°C | ✓ number entity |
+| HR[6436] | Custom verw. uitlaattemp. 2 | M21 | 25–65°C | ✓ number entity |
+| HR[6465] | Power-modus | N01 | 0–3 | ✓ select entity |
+
+### Holding Registers — NIET betrouwbaar als sensor
+
+> Uit overnight monitoring (9+ uur zonder tablet) bleek dat deze registers 0 of inconsistente waarden tonen.
+> Ze worden waarschijnlijk alleen gevuld wanneer de tablet-app actief is.
+
+| Adres | Oorspronkelijke mapping | Status |
+|-------|------------------------|--------|
+| HR[1], HR[4], HR[5] | Water outlet, target, tank temp | ⚠ Alleen betrouwbaar met tablet actief |
+| HR[72], HR[74-76] | Temperatuursensoren | ❌ Verwijderd uit integratie |
+| HR[187-189] | Energiesensoren | ❌ Verwijderd uit integratie |
+| HR[41] | Compressor power (kW) | ❌ Verwijderd — extern kWh-meter als vervanging |
+| HR[163-165] | 16-bit Wh tellers | ❌ Overflow elke ~65,5 kWh (~12 dagen) — onbruikbaar |
+
+### Coils — FC05 (pulse-commando's, alleen-schrijven)
+
+> Samenvatting van alle ontdekte coils. Geen van deze is uitleesbaar (FC01/FC02).
+> Elke schrijfactie is een puls (0xFF00). Er is geen toggle — elke richting heeft een aparte coil.
+
+| Coil | Functie | State register | In integratie |
+|------|---------|----------------|---------------|
+| 1024 | Unit AAN | HR[768] > 0 = aan | ✓ switch (unit_power) |
+| 1025 | Unit UIT | HR[768] = 0 = uit | ✓ (off_coil) |
+| 1073 | Stille modus AAN | Geen ⚠ | ✓ switch (silent_mode, RestoreEntity) |
+| 1074 | Stille modus UIT | Geen ⚠ | ✓ (off_coil) |
+| 1075 | Stil niveau 1 (laag) | Geen ⚠ | ✓ (off_coil van silent_level_2) |
+| 1076 | Stil niveau 2 (hoog) | Geen ⚠ | ✓ switch (silent_level_2, RestoreEntity) |
+
+### Berekende sensoren (niet uit Modbus register)
+
+| Sensor | Formule | Bronregisters | Eenheid |
+|--------|---------|---------------|---------|
+| Thermisch vermogen | `flow × (outlet − inlet) × 4.186 / 3600` | IR[54], IR[136], IR[135] | kW |
+| Geleverde warmte | Riemann-somintegratie op thermisch vermogen | (berekend in HA) | kWh |
+
+> **Thermal power bescherming:**
+> - Waarden met |result| > 30 kW → `None` (onrealistisch voor 3-8kW pomp)
+> - Negatieve waarden → `0.0` (clamp; in verwarmingsmodus moet thermal power ≥ 0 zijn)
+
+### Nog niet gescande bereiken
+
+| Bereik | Status | Opmerkingen |
+|--------|--------|-------------|
+| HR[300-699] | ⬜ Niet gescand | Gateway lockup bij grote scans |
+| HR[1400-6399] | ⬜ Niet gescand | Mogelijk stille modus level-register |
+| Discrete Inputs (FC02) | ⬜ Niet gescand | O-serie en S-serie status mogelijk hier |
+
+---
+
+## Stille modus status register — onderzoek (april 2026)
+
+> **Doel:** Hardware-feedbackregister vinden voor stille modus (aan/uit en level 1/2).
+
+### Onderzochte kandidaten
+
+| Register | Methode | Resultaat |
+|----------|---------|-----------|
+| HR[36] | 3-snapshot scan + gerichte verificatie | Gaat van 0 → 65535 (niet beschikbaar) bij coil toggle |
+| HR[1309] | 3-snapshot scan + gerichte verificatie | Gaat van 0 → 65535 (niet beschikbaar) bij coil toggle |
+| HR[768] | Gemonitord tijdens silent toggle | Stabiel op 4 — geen verandering |
+| HR[1283] | Gemonitord tijdens silent toggle | Stabiel op 0 — geen verandering |
+
+### Conclusie
+
+**Geen bruikbaar hardware-feedbackregister gevonden voor stille modus.**
+
+De warmtepomp heeft geen register dat de huidige silent mode status reflecteert.
+De coils (1073-1076) zijn write-only puls-commando's zonder uitleesbare tegenhanger.
+De HACS integratie gebruikt daarom `RestoreEntity` (HA persistent state) voor de silent_mode en silent_level_2 switches.
+
+Mogelijke toekomstige locatie: bereik HR[300-699] of HR[1400-6399] (nog niet gescand).
+
+---
+
+## HACS Integratie architectuur
+
+> **Repository:** [`RSloot2000/BataviaHeat-R290-Modbus`](https://github.com/RSloot2000/BataviaHeat-R290-Modbus)
+> **Domain:** `batavia_heat` | **pymodbus:** ≥3.6.0
+
+### Platforms
+
+| Platform | Entities | Bron |
+|----------|----------|------|
+| sensor | Alle IR en HR sensoren + thermal_power + energy + COP | FC04 + FC03 |
+| binary_sensor | compressor_running (HR[1283]) | FC03 |
+| switch | unit_power, silent_mode, silent_level_2 | FC05 coils |
+| number | M02, M11, M18-M21 (stooklijn parameters) | FC06 |
+| select | N01 power_mode (HR[6465]) | FC06 |
+| climate | Target temp (HR[6402]), huidige temp (HR[776]), status (HR[768]) | FC03/FC06 |
+
+### Bulk-read strategie (coordinator.py)
+
+> ~10 Modbus-requests per poll-cyclus (elke 10s), gesplitst per function code.
+
+**FC03 — Holding registers:**
+
+| Groep | Adressen | Registers |
+|-------|----------|-----------|
+| 1 | HR[768-776] | 9 registers (operationele status blok) |
+| 2 | HR[1283] | 1 register (compressor running) |
+| 3 | HR[6402] | 1 register (max heating temp) |
+| 4 | HR[6426-6436] | 11 registers (stooklijn parameters) |
+| 5 | HR[6465] | 1 register (power mode) |
+
+**FC04 — Input registers:**
+
+| Groep | Adressen | Registers |
+|-------|----------|-----------|
+| 1 | IR[22-25] | 4 registers (temperaturen) |
+| 2 | IR[32-33] | 2 registers (drukken) |
+| 3 | IR[53-54] | 2 registers (pomp) |
+| 4 | IR[66] | 1 register (pomp regelsignaal) |
+| 5 | IR[135-142] | 8 registers (module temps + pomp feedback) |
+
+### Stabiliteitsmaatregelen
+
+- **`_reset_client()`**: Force-close TCP-verbinding bij elke fout → verse connectie bij volgende poll
+- **Timeout 5s**: Voldoende marge voor Modbus TCP gateway latentie
+- **Thermal power clamp**: |result| > 30kW → None; negatief → 0.0
+- **RestoreEntity**: silent_mode en silent_level_2 herstellen staat na HA herstart
+- **COP gap guard**: Bij verbindingsuitval > 1 uur pauzeren thermische én elektrische accumulatie gelijktijdig

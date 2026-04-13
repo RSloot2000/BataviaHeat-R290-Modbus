@@ -6,9 +6,11 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -20,6 +22,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_BAUDRATE,
     CONF_CONNECTION_TYPE,
+    CONF_ENERGY_ENTITY,
     CONF_HOST,
     CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
@@ -96,6 +99,12 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._connection_type: str = CONNECTION_TCP
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> BataviaHeatOptionsFlow:
+        """Get the options flow handler."""
+        return BataviaHeatOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -210,3 +219,38 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="serial", data_schema=data_schema, errors=errors
         )
+
+
+class BataviaHeatOptionsFlow(OptionsFlow):
+    """Handle options flow for BataviaHeat R290."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            # Ensure empty optional field is stored explicitly
+            if CONF_ENERGY_ENTITY not in user_input:
+                user_input[CONF_ENERGY_ENTITY] = ""
+            return self.async_create_entry(data=user_input)
+
+        current = self._config_entry.options.get(CONF_ENERGY_ENTITY, "")
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_ENERGY_ENTITY,
+                    description={"suggested_value": current} if current else {},
+                ): EntitySelector(
+                    EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="energy",
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(step_id="init", data_schema=schema)
