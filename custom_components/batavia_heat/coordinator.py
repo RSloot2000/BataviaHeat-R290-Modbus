@@ -77,6 +77,8 @@ _MAX_READ_RETRIES = 3
 _TABLET_CYCLE_END_REGS = 54   # Tablet's last FC03 response has 54 registers
 _SINGLE_READ_TIMEOUT = 2.0    # Max wait for one Modbus response (seconds)
 _CYCLE_DETECT_TIMEOUT = 5.0   # Max wait for tablet cycle-end marker (seconds)
+_NO_TABLET_TIMEOUT = 1.0      # Shorter cycle-detect timeout when tablet known absent
+_NO_TABLET_THRESHOLD = 3      # Consecutive misses before switching to direct mode
 
 # Build lookup: address → (dict_key, reg_info) for fast dispatch after bulk read
 _ADDR_MAP: dict[int, tuple[str, dict]] = {}
@@ -108,6 +110,10 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._tcp_writer: asyncio.StreamWriter | None = None
         self._tcp_buf: bytes = b""
         self._tx_counter: int = 0
+
+        # Adaptive tablet detection
+        self._tablet_seen: bool = False
+        self._consecutive_no_tablet: int = 0
 
         # Serial pymodbus client
         self._serial_client: ModbusSerialClient | None = None
@@ -255,10 +261,18 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         every ~1.3s. The last response contains 54 registers (HR[768..821]).
         After detecting it, there is a ~400ms free window for our reads.
 
+        Uses adaptive timeout: full timeout while detecting tablet presence,
+        shorter timeout once tablet is confirmed absent (saves ~4s per update).
+
         Returns True if cycle end detected, False on timeout (tablet offline).
         """
+        if self._consecutive_no_tablet >= _NO_TABLET_THRESHOLD:
+            timeout = _NO_TABLET_TIMEOUT
+        else:
+            timeout = _CYCLE_DETECT_TIMEOUT
+
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _CYCLE_DETECT_TIMEOUT
+        deadline = loop.time() + timeout
         while loop.time() < deadline:
             frames = await self._tcp_read_available(timeout=0.02)
             for f in frames:
@@ -266,7 +280,20 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f.get("type") == "RSP"
                     and f.get("reg_count") == _TABLET_CYCLE_END_REGS
                 ):
+                    if not self._tablet_seen:
+                        _LOGGER.info("Tablet detected on RS485 bus — using synchronized reads")
+                    self._tablet_seen = True
+                    self._consecutive_no_tablet = 0
                     return True
+
+        self._consecutive_no_tablet += 1
+        if self._consecutive_no_tablet == _NO_TABLET_THRESHOLD:
+            _LOGGER.info(
+                "Tablet not detected after %d attempts — switching to direct "
+                "read mode (faster updates, no bus synchronization needed)",
+                _NO_TABLET_THRESHOLD,
+            )
+            self._tablet_seen = False
         return False
 
     async def _tcp_send_one_read(
@@ -343,6 +370,8 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         2. Read sequentially: one request at a time, FC04 first
         3. Count-validate each response (reject count mismatches)
         4. Retry failed reads in the next tablet cycle (max 3 attempts)
+
+        When tablet is absent, uses direct reads with shorter timeouts.
         """
         await self._async_connect_tcp()
 
@@ -369,8 +398,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             else:
                 _LOGGER.debug(
-                    "No tablet detected, reading %d groups unsynchronized",
+                    "Direct read mode → reading %d groups (tablet %s)",
                     len(pending),
+                    "absent" if not self._tablet_seen else "missed",
                 )
 
             completed: list[int] = []
