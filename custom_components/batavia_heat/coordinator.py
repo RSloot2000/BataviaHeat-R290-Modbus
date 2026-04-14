@@ -46,8 +46,14 @@ _LOGGER = logging.getLogger(__name__)
 # Split by function code — FC03≠FC04 for addresses 135+.
 
 # FC03 — Holding registers (operational, config, setpoints)
+# NOTE: HR[768-776] must be read individually. Batch read (768, 9) returns only
+# 8 registers (count mismatch → rejected) AND reports HR[772] as 0 instead of
+# the actual heating setpoint. Individual reads return correct values.
 _HOLDING_READ_GROUPS: list[tuple[int, int]] = [
-    (768, 9),     # HR[768-776]: operational status .. water outlet temp
+    (768, 1),     # HR[768]: operational status
+    (772, 1),     # HR[772]: heating target setpoint (MUST be individual read)
+    (773, 1),     # HR[773]: compressor discharge temperature
+    (776, 1),     # HR[776]: water outlet temperature
     (1283, 1),    # HR[1283]: compressor running
     (1348, 3),    # HR[1348-1350]: plate HX water temps + total water outlet
     (3230, 2),    # HR[3230-3231]: buffer inlet/outlet temperatures
