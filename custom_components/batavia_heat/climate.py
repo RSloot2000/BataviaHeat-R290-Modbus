@@ -26,7 +26,7 @@ COIL_UNIT_OFF = 1025
 
 # Register addresses
 REG_TARGET_TEMP = 6402    # HR[6402]: Max heating temperature / M02 (°C, scale=1)
-REG_CURRENT_TEMP = 776    # HR[776]: Water outlet temperature (°C, scale=0.1)
+REG_CURRENT_TEMP = 1350   # HR[1350]: T80 total water outlet temperature (°C, scale=0.1)
 REG_OP_STATUS = 768       # HR[768]: Operational status (0 = off, >0 = running)
 
 
