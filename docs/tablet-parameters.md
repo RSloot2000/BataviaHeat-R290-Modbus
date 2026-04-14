@@ -137,7 +137,7 @@
 | T14 | Module compressor numbers | 1 | |
 | T15 | Mode | 2 | 2=Verwarming |
 | T16 | Current mode | 2 | 2=Verwarming |
-| T17 | Adjustable target temp | 28,0 | °C — = HR[4] (×0.1) |
+| T17 | Adjustable target temp | 28,0 | °C — = HR[772] (×0.1) — berekend stooklijn-setpoint |
 | T18 | Adjustable control temp | 51,8 | °C |
 
 ### Module-informatie
@@ -482,9 +482,10 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 | Adres | Parameter | Eenheid | Schaal | Tablet code | Opmerkingen |
 |-------|-----------|---------|--------|-------------|-------------|
 | HR[768] | Operationele status | — | ×1 | T12 | >0 = unit draait; state_register voor unit_power switch |
+| HR[772] | Berekend verwarmings-setpoint | °C | ×0.1 | T17 | Actief stooklijn-setpoint; geïnterpoleerd uit curve-parameters. Ontdekt april 2026 |
 | HR[773] | Compressor uitlaattemperatuur | °C | ×0.1 | — | Discharge temp (HR-kopie) |
 | HR[776] | Water uitlaattemperatuur | °C | ×0.1 | — | Systeemwater uitlaat |
-| HR[816] | Watertemperatuur target | °C | ×0.1 | T17 | Dynamisch bij actieve weercurve |
+| HR[816] | Watertemperatuur target (kopie) | °C | ×0.1 | — | Kopie van HR[772]; niet gebruikt in integratie |
 | HR[1283] | Compressor draait | — | ×1 | — | 0=uit, >0=aan; binary_sensor in integratie |
 
 ### Holding Registers — FC03 (watertemperaturen)

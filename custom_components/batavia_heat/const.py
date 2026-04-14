@@ -64,6 +64,14 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "entity_type": "sensor",
         "icon": "mdi:heat-pump-outline",
     },
+    772: {
+        "name": "heating_target_setpoint",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+        "icon": "mdi:thermostat",
+    },
     773: {
         "name": "compressor_discharge_temperature",
         "device_class": "temperature",

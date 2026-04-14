@@ -130,6 +130,7 @@ After initial setup, you can optionally link an external kWh meter to enable COP
 | Module water outlet temperature | IR[137] | °C | Module water outlet |
 | Module ambient temperature | IR[138] | °C | Module ambient |
 | Operational status | HR[768] | - | Operating state (0 = off) |
+| Heating target setpoint | HR[772] | °C | Calculated heating curve setpoint (read-only) |
 | Compressor discharge temperature | HR[773] | °C | Compressor discharge (from outdoor unit) |
 | Water outlet temperature | HR[776] | °C | System water outlet (from outdoor unit) |
 | Plate HX water inlet temperature | HR[1348] | °C | Plate heat exchanger water inlet (T78) |
@@ -189,7 +190,7 @@ The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M]
 
 | Entity | Description |
 |--------|-------------|
-| Heat Pump | HVAC modes: **Heat** / **Off**. Current temperature from HR[776] (water outlet), target temperature from HR[6402] (M02). On/off via coils 1024/1025. |
+| Heat Pump | HVAC modes: **Heat** / **Off**. Current temperature from HR[1350] (T80 total water outlet), target temperature from HR[772] (calculated heating curve setpoint, read-only). When the heating curve is off (M11 = 0), the target temperature can be adjusted via HR[6402] (M02). On/off via coils 1024/1025. |
 
 ## COP calculation
 

@@ -137,7 +137,7 @@
 | T14 | Module compressor numbers | 1 | |
 | T15 | Mode | 2 | 2=Heating |
 | T16 | Current mode | 2 | 2=Heating |
-| T17 | Adjustable target temp | 28.0 | °C - = HR[4] (x0.1) |
+| T17 | Adjustable target temp | 28.0 | °C - = HR[772] (x0.1) — calculated heating curve setpoint |
 | T18 | Adjustable control temp | 51.8 | °C |
 
 ### Module Information
@@ -482,9 +482,10 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 | Address | Parameter | Unit | Scale | Tablet Code | Notes |
 |---------|-----------|------|-------|-------------|-------|
 | HR[768] | Operational status | — | ×1 | T12 | >0 = unit running; state_register for unit_power switch |
+| HR[772] | Calculated heating setpoint | °C | ×0.1 | T17 | Active heating curve setpoint; interpolated from curve parameters. Discovered April 2026 |
 | HR[773] | Compressor discharge temperature | °C | ×0.1 | — | Discharge temp (HR copy) |
 | HR[776] | Water outlet temperature | °C | ×0.1 | — | System water outlet |
-| HR[816] | Water temperature target | °C | ×0.1 | T17 | Dynamic when weather curve is active |
+| HR[816] | Water temperature target (copy) | °C | ×0.1 | — | Copy of HR[772]; not used in integration |
 | HR[1283] | Compressor running | — | ×1 | — | 0=off, >0=on; binary_sensor in integration |
 
 ### Holding Registers — FC03 (water temperatures)

@@ -437,12 +437,18 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
         )
 
 
+# Bump this when COP accumulation logic or register sources change.
+# Forces a clean reset instead of restoring stale/incompatible state.
+_COP_STATE_VERSION = 2
+
+
 class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
     """COP sensor for a specific time period (today/week/month/year/alltime).
 
     Accumulates thermal energy via Riemann integration and reads electrical
-    energy from an external kWh meter. Handles install-date awareness: if
-    installed mid-period, only counts from the installation moment.
+    energy from an external kWh meter. Both accumulators advance only when
+    thermal data is available (paired accumulation) to prevent COP skew
+    from asymmetric data gaps.
     """
 
     _attr_has_entity_name = True
@@ -497,6 +503,7 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
     def extra_state_attributes(self) -> dict:
         """Expose metadata for state restoration and diagnostics."""
         return {
+            "state_version": _COP_STATE_VERSION,
             "install_date": self._install_date.isoformat() if self._install_date else None,
             "period": self._period,
             "period_key": self._period_key,
@@ -539,10 +546,11 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
     def _update(self) -> None:
         """Accumulate thermal and electrical energy and compute period COP.
 
-        Both sides use the same time-gap guard (< 1 hour) so that a
-        connection outage causes both accumulators to pause equally.
-        This prevents the COP from being skewed when the kWh meter
-        keeps counting but thermal data is missing.
+        PAIRED ACCUMULATION: both thermal and electrical only advance when
+        thermal data is available (not None). This prevents COP skew when
+        Modbus reads fail (thermal=None) but the external kWh meter keeps
+        counting. The electrical meter position is always tracked so that
+        we don't "catch up" with a large delta after a data gap.
         """
         now = datetime.now(timezone.utc)
 
@@ -559,18 +567,24 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
             dt_hours = (now - self._last_update).total_seconds() / 3600.0
             valid_interval = 0 < dt_hours < 1
 
-        # Accumulate thermal energy (Riemann integration)
-        if valid_interval and self.coordinator.data is not None:
-            thermal_kw = _compute_thermal_power_kw(self.coordinator.data) or 0.0
-            self._accumulated_thermal += thermal_kw * dt_hours
-
-        # Accumulate electrical energy (delta from kWh meter, same guard)
+        # Read current values
+        thermal_kw = None
+        if self.coordinator.data is not None:
+            thermal_kw = _compute_thermal_power_kw(self.coordinator.data)
         current_electrical = self._read_electrical_kwh()
-        if current_electrical is not None:
-            if valid_interval and self._prev_electrical_kwh is not None:
+
+        # PAIRED accumulation: only accumulate BOTH when thermal is valid.
+        # thermal_kw=0.0 (pump off) is valid — standby power correctly
+        # enters the denominator. thermal_kw=None (data missing) skips both.
+        if valid_interval and thermal_kw is not None:
+            self._accumulated_thermal += thermal_kw * dt_hours
+            if current_electrical is not None and self._prev_electrical_kwh is not None:
                 delta = current_electrical - self._prev_electrical_kwh
                 if delta >= 0:
                     self._accumulated_electrical += delta
+
+        # Always track meter position to prevent delta catch-up after gaps
+        if current_electrical is not None:
             self._prev_electrical_kwh = current_electrical
 
         self._last_update = now
@@ -596,11 +610,14 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
                 except (ValueError, TypeError):
                     pass
 
-            # Restore period data only if same period is still active
+            # Only restore accumulators if state version matches AND
+            # same period is still active. Version mismatch means the
+            # calculation logic changed — old values would poison the COP.
+            saved_version = attrs.get("state_version")
             saved_key = attrs.get("period_key")
             current_key = self._period_key_for(self._period, datetime.now(timezone.utc))
 
-            if saved_key == current_key:
+            if saved_version == _COP_STATE_VERSION and saved_key == current_key:
                 try:
                     self._accumulated_thermal = float(
                         attrs.get("accumulated_thermal_kwh", 0)

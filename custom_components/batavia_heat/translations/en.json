@@ -63,6 +63,7 @@
       "module_water_outlet_temperature": { "name": "Module water outlet temperature" },
       "module_ambient_temperature": { "name": "Module ambient temperature" },
       "operational_status": { "name": "Operational status" },
+      "heating_target_setpoint": { "name": "Heating target setpoint" },
       "compressor_discharge_temperature": { "name": "Compressor discharge temperature" },
       "water_outlet_temperature": { "name": "Water outlet temperature" },
       "total_water_outlet_temperature": { "name": "Total water outlet temperature" },
