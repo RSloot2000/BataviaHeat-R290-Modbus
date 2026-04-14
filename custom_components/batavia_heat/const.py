@@ -78,6 +78,48 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "scale": 0.1,
         "entity_type": "sensor",
     },
+    # ─── Plate Heat Exchanger Water Temperatures ───
+    # Discovered 2026-04-14: T78/T79 from tablet module status map to HR[1348]/HR[1349].
+    # Previously mis-mapped to IR[135]/IR[136] which are refrigerant-side temps.
+    1348: {
+        "name": "plate_hx_water_inlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+    },
+    1349: {
+        "name": "plate_hx_water_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+    },
+    1350: {
+        "name": "total_water_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+    },
+
+    # ─── Buffer Tank Temperatures ───
+    # Discovered 2026-04-14: buffer inlet/outlet from tablet match HR[3230]/HR[3231].
+    3230: {
+        "name": "buffer_inlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+    },
+    3231: {
+        "name": "buffer_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+    },
+
     # ─── Energy & Power Monitoring ───
     # HR[41] (compressor_power), HR[1325] (inverter_current), HR[1338] (mains_voltage),
     # HR[1368] (dc_bus_voltage) removed — HomeWizard kWh meter replaces these.
@@ -186,7 +228,7 @@ CALCULATED_SENSORS: dict[str, dict] = {
         "unit": "kW",
         "icon": "mdi:fire",
         "description": "Berekend: flow_rate × (outlet − inlet) × 4.186 / 3600",
-        # Sources: IR[54] flow L/h, IR[135] inlet °C, IR[136] outlet °C
+        # Sources: IR[54] flow L/h, HR[1348] inlet °C (T78), HR[1349] outlet °C (T79)
     },
 }
 
@@ -273,20 +315,9 @@ INPUT_REGISTERS: dict[int, dict] = {
     },
 
     # ─── Module 0# Temperatures ───
-    135: {
-        "name": "plate_hx_water_inlet_temperature",
-        "device_class": "temperature",
-        "unit": "°C",
-        "scale": 0.1,
-        "entity_type": "sensor",
-    },
-    136: {
-        "name": "plate_hx_water_outlet_temperature",
-        "device_class": "temperature",
-        "unit": "°C",
-        "scale": 0.1,
-        "entity_type": "sensor",
-    },
+    # NOTE: IR[135] (~81°C) and IR[136] (0°C) were previously mis-mapped as plate HX
+    # water temperatures. IR[135] is actually a refrigerant-side temperature (condenser),
+    # IR[136] appears unused/disconnected. Correct water temps are HR[1348]/HR[1349].
     137: {
         "name": "module_water_outlet_temperature",
         "device_class": "temperature",

@@ -41,7 +41,7 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 ## Features
 
 - **Climate entity:** heating on/off and target temperature control via pulse-coils
-- **19 sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
+- **22 sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
 - **6 COP sensors:** built-in coefficient of performance tracking (current, today, week, month, year, all-time) — requires an external kWh meter entity
 - **1 binary sensor:** compressor running
 - **1 select entity:** power mode (standard / powerful / eco / auto)
@@ -126,13 +126,17 @@ After initial setup, you can optionally link an external kWh meter to enable COP
 | Pump flow rate | IR[54] | L/h | Water flow rate |
 | Pump control signal | IR[66] | % | Pump PWM control signal |
 | Pump feedback signal | IR[142] | % | Pump feedback signal |
-| Plate HX inlet temperature | IR[135] | °C | Plate heat exchanger inlet (water return) |
-| Plate HX outlet temperature | IR[136] | °C | Plate heat exchanger outlet (water supply) |
+| Condenser temperature | IR[135] | °C | Refrigerant-side condenser temperature (module 0#) |
 | Module water outlet temperature | IR[137] | °C | Module water outlet |
 | Module ambient temperature | IR[138] | °C | Module ambient |
 | Operational status | HR[768] | - | Operating state (0 = off) |
 | Compressor discharge temperature | HR[773] | °C | Compressor discharge (from outdoor unit) |
 | Water outlet temperature | HR[776] | °C | System water outlet (from outdoor unit) |
+| Plate HX water inlet temperature | HR[1348] | °C | Plate heat exchanger water inlet (T78) |
+| Plate HX water outlet temperature | HR[1349] | °C | Plate heat exchanger water outlet (T79) |
+| Total water outlet temperature | HR[1350] | °C | Total water outlet after plate HX (T80) |
+| Buffer inlet temperature | HR[3230] | °C | Buffer tank inlet (water entering buffer) |
+| Buffer outlet temperature | HR[3231] | °C | Buffer tank outlet (water leaving buffer) |
 | Thermal power | calculated | kW | flow × ΔT × 4.186 / 3600 |
 | Energy delivered | integrated | kWh | Riemann sum of thermal power |
 | COP (current) | calculated | — | Real-time coefficient of performance¹ |
@@ -185,11 +189,11 @@ The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M]
 
 | Entity | Description |
 |--------|-------------|
-| Heat Pump | HVAC modes: **Heat** / **Off**. Current temperature from IR[136], target temperature from HR[4]. On/off via coils 1024/1025. |
+| Heat Pump | HVAC modes: **Heat** / **Off**. Current temperature from HR[776] (water outlet), target temperature from HR[6402] (M02). On/off via coils 1024/1025. |
 
 ## COP calculation
 
-This integration has **built-in COP (Coefficient of Performance) sensors**. Thermal power and energy are calculated from Modbus data (flow rate × ΔT). Electrical consumption is **not** available from the heat pump itself, it only reports compressor power, not total system consumption. An external kWh meter (e.g. HomeWizard) is required for COP calculation.
+This integration has **built-in COP (Coefficient of Performance) sensors**. Thermal power and energy are calculated from Modbus data (flow rate × ΔT using HR[1348]/HR[1349] water temperatures). Electrical consumption is **not** available from the heat pump itself, it only reports compressor power, not total system consumption. An external kWh meter (e.g. HomeWizard) is required for COP calculation.
 
 ### Setup
 

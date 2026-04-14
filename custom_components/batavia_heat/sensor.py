@@ -187,8 +187,8 @@ class BataviaHeatCalculatedSensor(SensorEntity):
             # thermal_power = flow_rate(L/h) × (outlet−inlet)(°C) × 4.186(J/g·°C) / 3600
             # Result in kW
             flow = data.get("input", {}).get(54)      # L/h
-            inlet = data.get("input", {}).get(135)     # °C (water inlet plate HX)
-            outlet = data.get("input", {}).get(136)    # °C (water outlet plate HX)
+            inlet = data.get("holding", {}).get(1348)  # °C (water inlet plate HX, T78)
+            outlet = data.get("holding", {}).get(1349) # °C (water outlet plate HX, T79)
             if flow is None or inlet is None or outlet is None:
                 return None
             if flow <= 0:
@@ -286,8 +286,8 @@ class BataviaHeatEnergySensor(RestoreEntity, SensorEntity):
         # Calculated sensor: compute inline
         if self._power_source == "thermal_power":
             flow = data.get("input", {}).get(54)
-            inlet = data.get("input", {}).get(135)
-            outlet = data.get("input", {}).get(136)
+            inlet = data.get("holding", {}).get(1348)
+            outlet = data.get("holding", {}).get(1349)
             if flow is None or inlet is None or outlet is None or flow <= 0:
                 return 0.0
             return flow * (outlet - inlet) * 4.186 / 3600
@@ -330,8 +330,8 @@ class BataviaHeatEnergySensor(RestoreEntity, SensorEntity):
 def _compute_thermal_power_kw(data: dict) -> float | None:
     """Compute thermal power in kW from coordinator data."""
     flow = data.get("input", {}).get(54)
-    inlet = data.get("input", {}).get(135)
-    outlet = data.get("input", {}).get(136)
+    inlet = data.get("holding", {}).get(1348)
+    outlet = data.get("holding", {}).get(1349)
     if flow is None or inlet is None or outlet is None:
         return None
     if flow <= 0:

@@ -169,6 +169,22 @@
 | T42 | 0# module compressor numbers | 1 | - | |
 | T43-T49 | 1-7# compressor numbers | 0 | - | Inactive |
 
+### Module Status (0# module)
+
+> **Discovered April 2026** via Modbus register scanning.
+> Only visible on the tablet via "Module status" → 0# module detail.
+> Values verified against tablet readings at stable and declining temperatures.
+
+| Code | Parameter | Unit | Notes |
+|------|-----------|------|-------|
+| T78 | Plate HX water inlet temp | °C | = HR[1348] (×0.1) — water inlet plate heat exchanger |
+| T79 | Plate HX water outlet temp | °C | = HR[1349] (×0.1) — water outlet plate heat exchanger |
+| T80 | Total water outlet temp | °C | = HR[1350] (×0.1) — combined water outlet |
+| — | Buffer inlet temperature | °C | = HR[3230] (×0.1) — water entering buffer tank |
+| — | Buffer outlet temperature | °C | = HR[3231] (×0.1) — water leaving buffer tank |
+
+> **Note:** HR[3230-3231] are mirrored in HR[3355-3357] (identical values).
+
 ### Limits & Other
 
 | Code | Parameter | Value | Unit | Notes |
@@ -453,8 +469,8 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 | IR[53] | Pump target speed | rpm | ×1 | — | Water pump target speed |
 | IR[54] | Pump flow rate | L/h | ×1 | — | Water flow; source for thermal power |
 | IR[66] | Pump control signal | % | ×0.1 | — | PWM output to pump |
-| IR[135] | Plate HX water inlet temp | °C | ×0.1 | — | ⚠ FC04 ONLY! Module 0# |
-| IR[136] | Plate HX water outlet temp | °C | ×0.1 | — | ⚠ FC04 ONLY! Source for thermal power |
+| IR[135] | Condenser temperature (refrigerant side) | °C | ×0.1 | — | ⚠ FC04 ONLY! ~81°C when compressor running. Previously mis-documented as "plate HX water inlet" |
+| IR[136] | (not connected) | °C | ×0.1 | — | ⚠ FC04 ONLY! Reads 0°C — sensor not connected |
 | IR[137] | Module water outlet temp | °C | ×0.1 | T30? | Module 0# |
 | IR[138] | Module ambient temperature | °C | ×0.1 | — | Often 0 — possibly redundant with IR[22] |
 | IR[142] | Pump feedback signal | % | ×0.1 | — | Speed feedback from pump |
@@ -470,6 +486,19 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 | HR[776] | Water outlet temperature | °C | ×0.1 | — | System water outlet |
 | HR[816] | Water temperature target | °C | ×0.1 | T17 | Dynamic when weather curve is active |
 | HR[1283] | Compressor running | — | ×1 | — | 0=off, >0=on; binary_sensor in integration |
+
+### Holding Registers — FC03 (water temperatures)
+
+> Discovered April 2026. These registers contain the plate heat exchanger and buffer tank
+> water temperatures, corresponding to the tablet T78/T79/T80 values and buffer in/out.
+
+| Address | Parameter | Unit | Scale | Tablet Code | Notes |
+|---------|-----------|------|-------|-------------|-------|
+| HR[1348] | Plate HX water inlet temp | °C | ×0.1 | T78 | Water return to plate heat exchanger |
+| HR[1349] | Plate HX water outlet temp | °C | ×0.1 | T79 | Water supply from plate heat exchanger; source for thermal power |
+| HR[1350] | Total water outlet temp | °C | ×0.1 | T80 | Water after plate heat exchanger |
+| HR[3230] | Buffer inlet temperature | °C | ×0.1 | — | Water entering buffer tank |
+| HR[3231] | Buffer outlet temperature | °C | ×0.1 | — | Water leaving buffer tank |
 
 ### Holding Registers — FC06 (writable, setpoints)
 
@@ -517,7 +546,7 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 
 | Sensor | Formula | Source Registers | Unit |
 |--------|---------|------------------|------|
-| Thermal power | `flow × (outlet − inlet) × 4.186 / 3600` | IR[54], IR[136], IR[135] | kW |
+| Thermal power | `flow × (outlet − inlet) × 4.186 / 3600` | IR[54], HR[1349], HR[1348] | kW |
 | Delivered heat | Riemann sum integration on thermal power | (calculated in HA) | kWh |
 
 > **Thermal power protection:**

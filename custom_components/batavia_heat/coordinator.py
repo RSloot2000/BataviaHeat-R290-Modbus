@@ -39,6 +39,8 @@ _LOGGER = logging.getLogger(__name__)
 _HOLDING_READ_GROUPS: list[tuple[int, int]] = [
     (768, 9),     # HR[768-776]: operational status .. water outlet temp
     (1283, 1),    # HR[1283]: compressor running
+    (1348, 3),    # HR[1348-1350]: plate HX inlet/outlet (T78/T79) + total water outlet (T80)
+    (3230, 2),    # HR[3230-3231]: buffer inlet/outlet temperatures
     (6402, 1),    # HR[6402]: max heating temperature
     (6426, 11),   # HR[6426-6436]: heating curve params
     (6465, 1),    # HR[6465]: N01 power mode

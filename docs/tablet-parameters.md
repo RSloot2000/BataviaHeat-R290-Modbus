@@ -169,6 +169,22 @@
 | T42 | 0# module compressor numbers | 1 | — | |
 | T43–T49 | 1–7# compressor numbers | 0 | — | Niet actief |
 
+### Module status (0# module)
+
+> **Ontdekt april 2026** via Modbus register scanning.
+> Alleen zichtbaar op het tablet via "Module status" → 0# module detail.
+> Waarden zijn geverifieerd tegen tablet-aflezing bij stabiele en dalende temperaturen.
+
+| Code | Parameter | Eenheid | Opmerkingen |
+|------|-----------|---------|-------------|
+| T78 | Plate HX water inlet temp | °C | = HR[1348] (×0.1) — water inlaat platenwisselaar |
+| T79 | Plate HX water outlet temp | °C | = HR[1349] (×0.1) — water uitlaat platenwisselaar |
+| T80 | Total water outlet temp | °C | = HR[1350] (×0.1) — totale water uitlaat |
+| — | Buffer inlet temperature | °C | = HR[3230] (×0.1) — water inlaat buffertank |
+| — | Buffer outlet temperature | °C | = HR[3231] (×0.1) — water uitlaat buffertank |
+
+> **Let op:** HR[3230-3231] worden gespiegeld in HR[3355-3357] (identieke waarden).
+
 ### Limieten & overig
 
 | Code | Parameter | Waarde | Eenheid | Opmerkingen |
@@ -453,8 +469,8 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 | IR[53] | Pomp doelsnelheid | rpm | ×1 | — | Waterpomp target speed |
 | IR[54] | Pomp debiet (flowrate) | L/h | ×1 | — | Waterdoorstroming; bron voor thermal power |
 | IR[66] | Pomp regelsignaal | % | ×0.1 | — | PWM output naar pomp |
-| IR[135] | Platenwisselaar water inlaat temp. | °C | ×0.1 | — | ⚠ ALLEEN via FC04! Module 0# |
-| IR[136] | Platenwisselaar water uitlaat temp. | °C | ×0.1 | — | ⚠ ALLEEN via FC04! Bron voor thermal power |
+| IR[135] | Condenser temperatuur (koelmiddelzijde) | °C | ×0.1 | — | ⚠ ALLEEN via FC04! ~81°C bij draaiende compressor. Voorheen foutief als "plate HX water inlaat" gedocumenteerd |
+| IR[136] | (niet aangesloten) | °C | ×0.1 | — | ⚠ ALLEEN via FC04! Toont 0°C — sensor niet aangesloten |
 | IR[137] | Module water uitlaat temp. | °C | ×0.1 | T30? | Module 0# |
 | IR[138] | Module omgevingstemperatuur | °C | ×0.1 | — | Vaak 0 — mogelijk redundant met IR[22] |
 | IR[142] | Pomp feedback signaal | % | ×0.1 | — | Terugmelding snelheid van pomp |
@@ -470,6 +486,19 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 | HR[776] | Water uitlaattemperatuur | °C | ×0.1 | — | Systeemwater uitlaat |
 | HR[816] | Watertemperatuur target | °C | ×0.1 | T17 | Dynamisch bij actieve weercurve |
 | HR[1283] | Compressor draait | — | ×1 | — | 0=uit, >0=aan; binary_sensor in integratie |
+
+### Holding Registers — FC03 (watertemperaturen)
+
+> Ontdekt april 2026. Deze registers bevatten de watertemperaturen van de platenwisselaar
+> en buffertank, overeenkomend met de tablet T78/T79/T80 waarden en buffertank in/uit.
+
+| Adres | Parameter | Eenheid | Schaal | Tablet code | Opmerkingen |
+|-------|-----------|---------|--------|-------------|-------------|
+| HR[1348] | Platenwisselaar water inlaat | °C | ×0.1 | T78 | Water retour naar platenwisselaar |
+| HR[1349] | Platenwisselaar water uitlaat | °C | ×0.1 | T79 | Water aanvoer van platenwisselaar; bron voor thermal power |
+| HR[1350] | Totale water uitlaat | °C | ×0.1 | T80 | Water na platenwisselaar |
+| HR[3230] | Buffer inlaattemperatuur | °C | ×0.1 | — | Water inlaat buffertank |
+| HR[3231] | Buffer uitlaattemperatuur | °C | ×0.1 | — | Water uitlaat buffertank |
 
 ### Holding Registers — FC06 (schrijfbaar, setpoints)
 
@@ -517,7 +546,7 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 
 | Sensor | Formule | Bronregisters | Eenheid |
 |--------|---------|---------------|---------|
-| Thermisch vermogen | `flow × (outlet − inlet) × 4.186 / 3600` | IR[54], IR[136], IR[135] | kW |
+| Thermisch vermogen | `flow × (outlet − inlet) × 4.186 / 3600` | IR[54], HR[1349], HR[1348] | kW |
 | Geleverde warmte | Riemann-somintegratie op thermisch vermogen | (berekend in HA) | kWh |
 
 > **Thermal power bescherming:**
