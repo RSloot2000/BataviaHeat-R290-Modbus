@@ -1,11 +1,22 @@
-"""DataUpdateCoordinator for BataviaHeat R290."""
+"""DataUpdateCoordinator for BataviaHeat R290.
+
+TCP connections use raw-socket tablet-synchronized bus-sharing:
+the DR164 RS485-to-WiFi gateway shares the bus with the manufacturer's tablet,
+which polls the heat pump every ~1.3s using FC03. This coordinator detects the
+tablet's polling cycle end and reads in the ~400ms free window. Count validation
+and automatic retries ensure zero corrupt data reaches Home Assistant.
+
+Serial connections use standard pymodbus (no bus sharing needed).
+"""
 from __future__ import annotations
 
+import asyncio
 import logging
+import struct
 from datetime import timedelta
 from typing import Any
 
-from pymodbus.client import ModbusSerialClient, ModbusTcpClient
+from pymodbus.client import ModbusSerialClient
 from pymodbus.exceptions import ModbusException
 
 from homeassistant.config_entries import ConfigEntry
@@ -31,15 +42,14 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Efficient bulk-read groups: (start_address, count)
-# Split by function code — FC03=FC04 is NOT true for all address ranges.
-# Addresses 135+ return wrong data via FC03; must use FC04.
+# ── Read group definitions ──
+# Split by function code — FC03≠FC04 for addresses 135+.
 
 # FC03 — Holding registers (operational, config, setpoints)
 _HOLDING_READ_GROUPS: list[tuple[int, int]] = [
     (768, 9),     # HR[768-776]: operational status .. water outlet temp
     (1283, 1),    # HR[1283]: compressor running
-    (1348, 3),    # HR[1348-1350]: plate HX inlet/outlet (T78/T79) + total water outlet (T80)
+    (1348, 3),    # HR[1348-1350]: plate HX water temps + total water outlet
     (3230, 2),    # HR[3230-3231]: buffer inlet/outlet temperatures
     (6402, 1),    # HR[6402]: max heating temperature
     (6426, 11),   # HR[6426-6436]: heating curve params
@@ -54,6 +64,19 @@ _INPUT_READ_GROUPS: list[tuple[int, int]] = [
     (66, 1),      # IR[66]: pump control signal
     (135, 8),     # IR[135-142]: HX temps, module temps, pump feedback
 ]
+
+# Combined read list for TCP: FC04 first (tablet only uses FC03 → zero
+# collision risk), then FC03 (may collide, retries handle it).
+_TCP_READ_GROUPS: list[tuple[int, int, int]] = [
+    *[(4, start, count) for start, count in _INPUT_READ_GROUPS],
+    *[(3, start, count) for start, count in _HOLDING_READ_GROUPS],
+]
+
+# Tablet bus-sharing constants
+_MAX_READ_RETRIES = 3
+_TABLET_CYCLE_END_REGS = 54   # Tablet's last FC03 response has 54 registers
+_SINGLE_READ_TIMEOUT = 2.0    # Max wait for one Modbus response (seconds)
+_CYCLE_DETECT_TIMEOUT = 5.0   # Max wait for tablet cycle-end marker (seconds)
 
 # Build lookup: address → (dict_key, reg_info) for fast dispatch after bulk read
 _ADDR_MAP: dict[int, tuple[str, dict]] = {}
@@ -79,7 +102,15 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_entry = entry
         self._connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TCP)
         self._slave_id = entry.data[CONF_SLAVE_ID]
-        self._client: ModbusTcpClient | ModbusSerialClient | None = None
+
+        # TCP raw socket state (tablet-synchronized)
+        self._tcp_reader: asyncio.StreamReader | None = None
+        self._tcp_writer: asyncio.StreamWriter | None = None
+        self._tcp_buf: bytes = b""
+        self._tx_counter: int = 0
+
+        # Serial pymodbus client
+        self._serial_client: ModbusSerialClient | None = None
 
         if self._connection_type == CONNECTION_SERIAL:
             self._serial_port = entry.data[CONF_SERIAL_PORT]
@@ -88,46 +119,233 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._host = entry.data[CONF_HOST]
             self._tcp_port = entry.data[CONF_TCP_PORT]
 
-    def _get_client(self) -> ModbusTcpClient | ModbusSerialClient:
-        """Get or create the Modbus client."""
-        if self._client is None or not self._client.connected:
-            if self._connection_type == CONNECTION_SERIAL:
-                self._client = ModbusSerialClient(
-                    port=self._serial_port,
-                    baudrate=self._baudrate,
-                    stopbits=1,
-                    bytesize=8,
-                    parity="N",
-                    timeout=5,
-                )
-                if not self._client.connect():
-                    raise ConnectionError(f"Cannot open serial port {self._serial_port}")
-            else:
-                self._client = ModbusTcpClient(
-                    host=self._host,
-                    port=self._tcp_port,
-                    timeout=5,
-                )
-                if not self._client.connect():
-                    raise ConnectionError(f"Cannot connect to {self._host}:{self._tcp_port}")
-        return self._client
+    # ── Shared register processing ──
 
-    def _reset_client(self) -> None:
-        """Force-close the client so the next poll creates a fresh connection."""
-        if self._client:
+    @staticmethod
+    def _process_registers(
+        data: dict[str, Any], start_addr: int, registers: list[int],
+    ) -> None:
+        """Apply scaling, sign handling, and store in data dict."""
+        for i, raw in enumerate(registers):
+            addr = start_addr + i
+            if addr not in _ADDR_MAP:
+                continue
+            if raw in SENSOR_DISCONNECTED:
+                continue
+            dict_key, reg_info = _ADDR_MAP[addr]
+            scale = reg_info.get("scale", 1)
+            if reg_info.get("signed", True) and raw > 32767:
+                raw = raw - 65536
+            data[dict_key][addr] = raw * scale
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TCP: Raw socket with tablet-synchronized bus-sharing
+    # ══════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _build_tcp_read(
+        tx_id: int, slave: int, fc: int, start: int, count: int,
+    ) -> bytes:
+        """Build a Modbus TCP read request frame (FC03/FC04)."""
+        pdu = struct.pack(">BHH", fc, start, count)
+        mbap = struct.pack(">HHHB", tx_id, 0, len(pdu) + 1, slave)
+        return mbap + pdu
+
+    @staticmethod
+    def _build_tcp_write_register(
+        tx_id: int, slave: int, address: int, value: int,
+    ) -> bytes:
+        """Build a Modbus TCP FC06 (write single register) frame."""
+        pdu = struct.pack(">BHH", 6, address, value)
+        mbap = struct.pack(">HHHB", tx_id, 0, len(pdu) + 1, slave)
+        return mbap + pdu
+
+    @staticmethod
+    def _build_tcp_write_coil(
+        tx_id: int, slave: int, address: int, value: bool,
+    ) -> bytes:
+        """Build a Modbus TCP FC05 (write single coil) frame."""
+        coil_value = 0xFF00 if value else 0x0000
+        pdu = struct.pack(">BHH", 5, address, coil_value)
+        mbap = struct.pack(">HHHB", tx_id, 0, len(pdu) + 1, slave)
+        return mbap + pdu
+
+    @staticmethod
+    def _parse_tcp_frames(data: bytes) -> tuple[list[dict], bytes]:
+        """Parse complete Modbus TCP frames. Returns (frames, leftover_bytes)."""
+        frames: list[dict] = []
+        pos = 0
+        while pos + 9 <= len(data):
+            tx_id = struct.unpack_from(">H", data, pos)[0]
+            protocol = struct.unpack_from(">H", data, pos + 2)[0]
+            length = struct.unpack_from(">H", data, pos + 4)[0]
+
+            if protocol != 0 or length < 2 or length > 253:
+                pos += 1
+                continue
+
+            total = 6 + length
+            if pos + total > len(data):
+                break  # incomplete frame
+
+            fc = data[pos + 7]
+            payload = data[pos + 8 : pos + total]
+            frame: dict[str, Any] = {"tx_id": tx_id, "fc": fc}
+
+            # Read response (FC03/FC04): byte_count + register data
+            if fc in (3, 4) and len(payload) >= 1:
+                byte_count = payload[0]
+                if (
+                    byte_count > 0
+                    and byte_count % 2 == 0
+                    and byte_count == len(payload) - 1
+                ):
+                    reg_count = byte_count // 2
+                    values = [
+                        struct.unpack_from(">H", payload, 1 + i * 2)[0]
+                        for i in range(reg_count)
+                        if 1 + i * 2 + 2 <= len(payload)
+                    ]
+                    frame["type"] = "RSP"
+                    frame["reg_count"] = reg_count
+                    frame["values"] = values
+                else:
+                    frame["type"] = "OTHER"
+            # FC06 write register response: echo of address + value
+            elif fc == 6 and len(payload) == 4:
+                frame["type"] = "WRITE_RSP"
+                frame["address"] = struct.unpack_from(">H", payload, 0)[0]
+                frame["value"] = struct.unpack_from(">H", payload, 2)[0]
+            # FC05 write coil response: echo of address + value
+            elif fc == 5 and len(payload) == 4:
+                frame["type"] = "COIL_RSP"
+                frame["address"] = struct.unpack_from(">H", payload, 0)[0]
+                frame["value"] = struct.unpack_from(">H", payload, 2)[0]
+            else:
+                frame["type"] = "OTHER"
+
+            frames.append(frame)
+            pos += total
+
+        return frames, data[pos:]
+
+    def _next_tx_id(self) -> int:
+        """Get the next unique Modbus TCP transaction ID."""
+        self._tx_counter = (self._tx_counter % 65000) + 1
+        return self._tx_counter
+
+    async def _tcp_read_available(self, timeout: float = 0.05) -> list[dict]:
+        """Read all available data from TCP socket, parse into frames."""
+        assert self._tcp_reader is not None
+        try:
+            data = await asyncio.wait_for(
+                self._tcp_reader.read(4096), timeout=timeout,
+            )
+            if data:
+                self._tcp_buf += data
+        except asyncio.TimeoutError:
+            pass
+        frames, self._tcp_buf = self._parse_tcp_frames(self._tcp_buf)
+        return frames
+
+    async def _tcp_wait_for_cycle_end(self) -> bool:
+        """Wait for the tablet's cycle-end marker (54-register FC03 response).
+
+        The manufacturer's tablet polls the heat pump in a 7-request cycle
+        every ~1.3s. The last response contains 54 registers (HR[768..821]).
+        After detecting it, there is a ~400ms free window for our reads.
+
+        Returns True if cycle end detected, False on timeout (tablet offline).
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CYCLE_DETECT_TIMEOUT
+        while loop.time() < deadline:
+            frames = await self._tcp_read_available(timeout=0.02)
+            for f in frames:
+                if (
+                    f.get("type") == "RSP"
+                    and f.get("reg_count") == _TABLET_CYCLE_END_REGS
+                ):
+                    return True
+        return False
+
+    async def _tcp_send_one_read(
+        self, fc: int, start: int, count: int,
+    ) -> list[int] | None:
+        """Send one Modbus read and wait for the matching response.
+
+        Skips interleaved tablet traffic. Returns register values if count
+        matches, None on timeout or count mismatch (collision corruption).
+        """
+        assert self._tcp_writer is not None
+        tx_id = self._next_tx_id()
+        frame = self._build_tcp_read(tx_id, self._slave_id, fc, start, count)
+        self._tcp_writer.write(frame)
+        await self._tcp_writer.drain()
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _SINGLE_READ_TIMEOUT
+        while loop.time() < deadline:
+            frames = await self._tcp_read_available(timeout=0.02)
+            for f in frames:
+                if f.get("tx_id") == tx_id and f.get("type") == "RSP":
+                    if f.get("reg_count") == count:
+                        return f["values"]
+                    _LOGGER.debug(
+                        "Count mismatch FC%d [%d]: got %d, expected %d",
+                        fc, start, f.get("reg_count"), count,
+                    )
+                    return None
+        return None
+
+    async def _async_connect_tcp(self) -> None:
+        """Ensure a live TCP connection to the DR164 gateway."""
+        if self._tcp_writer is not None:
             try:
-                self._client.close()
+                # Lightweight liveness check
+                self._tcp_writer.write(b"")
+                await self._tcp_writer.drain()
+                return
+            except (OSError, ConnectionError):
+                await self._async_disconnect_tcp()
+
+        _LOGGER.debug("Opening TCP connection to %s:%s", self._host, self._tcp_port)
+        self._tcp_reader, self._tcp_writer = await asyncio.open_connection(
+            self._host, self._tcp_port,
+        )
+        self._tcp_buf = b""
+
+        # Send probe to activate DR164's TCP-to-RS485 bridge
+        tx_id = self._next_tx_id()
+        probe = self._build_tcp_read(tx_id, self._slave_id, 3, 768, 1)
+        self._tcp_writer.write(probe)
+        await self._tcp_writer.drain()
+        # Drain probe response and any buffered tablet traffic
+        await self._tcp_read_available(timeout=0.5)
+
+    async def _async_disconnect_tcp(self) -> None:
+        """Close the TCP connection."""
+        if self._tcp_writer:
+            try:
+                self._tcp_writer.close()
+                await self._tcp_writer.wait_closed()
             except Exception:  # noqa: BLE001
                 pass
-            self._client = None
+        self._tcp_reader = None
+        self._tcp_writer = None
+        self._tcp_buf = b""
 
-    def _read_all_registers(self) -> dict[str, Any]:
-        """Read all configured registers using FC03 (holding) and FC04 (input).
+    async def _async_read_all_registers_tcp(self) -> dict[str, Any]:
+        """Read all registers via TCP with tablet-synchronized bus-sharing.
 
-        FC03 and FC04 return identical data for low addresses (0-100),
-        but for addresses 135+ FC04 is required for correct sensor data.
+        Strategy proven by bus_test_synced3.py (12/12 OK, 100% success):
+        1. Sync to tablet cycle end (54-reg response marker)
+        2. Read sequentially: one request at a time, FC04 first
+        3. Count-validate each response (reject count mismatches)
+        4. Retry failed reads in the next tablet cycle (max 3 attempts)
         """
-        client = self._get_client()
+        await self._async_connect_tcp()
+
         data: dict[str, Any] = {
             "holding": {},
             "input": {},
@@ -135,82 +353,227 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "discrete": {},
         }
 
-        def _process_registers(start_addr: int, registers: list[int]) -> None:
-            for i, raw in enumerate(registers):
-                addr = start_addr + i
-                if addr not in _ADDR_MAP:
-                    continue
-                if raw in SENSOR_DISCONNECTED:
-                    continue
-                dict_key, reg_info = _ADDR_MAP[addr]
-                scale = reg_info.get("scale", 1)
-                if reg_info.get("signed", True) and raw > 32767:
-                    raw = raw - 65536
-                data[dict_key][addr] = raw * scale
+        # Track pending reads: index → attempt count
+        pending: dict[int, int] = {i: 0 for i in range(len(_TCP_READ_GROUPS))}
+        results: dict[int, list[int]] = {}
+        max_cycles = _MAX_READ_RETRIES * 2  # Safety limit
 
-        # FC03 — Holding registers
+        for _cycle in range(max_cycles):
+            if not pending:
+                break
+
+            synced = await self._tcp_wait_for_cycle_end()
+            if synced:
+                _LOGGER.debug(
+                    "Tablet cycle end → reading %d groups", len(pending),
+                )
+            else:
+                _LOGGER.debug(
+                    "No tablet detected, reading %d groups unsynchronized",
+                    len(pending),
+                )
+
+            completed: list[int] = []
+            for idx in sorted(pending.keys()):
+                fc, start, count = _TCP_READ_GROUPS[idx]
+                pending[idx] += 1
+
+                values = await self._tcp_send_one_read(fc, start, count)
+                if values is not None:
+                    results[idx] = values
+                    completed.append(idx)
+                elif pending[idx] >= _MAX_READ_RETRIES:
+                    _LOGGER.warning(
+                        "FC%d [%d] x%d failed after %d attempts",
+                        fc, start, count, _MAX_READ_RETRIES,
+                    )
+                    completed.append(idx)
+                else:
+                    _LOGGER.debug(
+                        "FC%d [%d] x%d attempt %d failed, will retry",
+                        fc, start, count, pending[idx],
+                    )
+
+            for idx in completed:
+                del pending[idx]
+
+        # Process all successful results
+        for idx, values in results.items():
+            _fc, start, _count = _TCP_READ_GROUPS[idx]
+            self._process_registers(data, start, values)
+
+        if pending:
+            _LOGGER.warning(
+                "Could not read %d register groups after retries", len(pending),
+            )
+
+        return data
+
+    async def _tcp_send_write_and_wait(
+        self, frame: bytes, tx_id: int, expected_type: str,
+    ) -> dict | None:
+        """Send a write frame and wait for the matching response."""
+        assert self._tcp_writer is not None
+        # Sync to tablet cycle to avoid bus collision
+        await self._tcp_wait_for_cycle_end()
+
+        self._tcp_writer.write(frame)
+        await self._tcp_writer.drain()
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _SINGLE_READ_TIMEOUT
+        while loop.time() < deadline:
+            frames = await self._tcp_read_available(timeout=0.02)
+            for f in frames:
+                if f.get("tx_id") == tx_id and f.get("type") == expected_type:
+                    return f
+        return None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Serial: Standard pymodbus client (no tablet sharing needed)
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _get_serial_client(self) -> ModbusSerialClient:
+        """Get or create the serial Modbus client."""
+        if self._serial_client is None or not self._serial_client.connected:
+            self._serial_client = ModbusSerialClient(
+                port=self._serial_port,
+                baudrate=self._baudrate,
+                stopbits=1,
+                bytesize=8,
+                parity="N",
+                timeout=5,
+            )
+            if not self._serial_client.connect():
+                raise ConnectionError(
+                    f"Cannot open serial port {self._serial_port}"
+                )
+        return self._serial_client
+
+    def _read_all_registers_serial(self) -> dict[str, Any]:
+        """Read all registers via serial (standard pymodbus)."""
+        client = self._get_serial_client()
+        data: dict[str, Any] = {
+            "holding": {},
+            "input": {},
+            "coil": {},
+            "discrete": {},
+        }
+
         for start_addr, count in _HOLDING_READ_GROUPS:
             try:
                 result = client.read_holding_registers(
-                    start_addr, count=count, device_id=self._slave_id
+                    start_addr, count=count, device_id=self._slave_id,
                 )
                 if result.isError():
                     _LOGGER.debug("Error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
                     continue
-                _process_registers(start_addr, result.registers)
+                self._process_registers(data, start_addr, result.registers)
             except ModbusException as err:
-                _LOGGER.debug("Modbus error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
+                _LOGGER.debug("Modbus error HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
 
-        # FC04 — Input registers
         for start_addr, count in _INPUT_READ_GROUPS:
             try:
                 result = client.read_input_registers(
-                    start_addr, count=count, device_id=self._slave_id
+                    start_addr, count=count, device_id=self._slave_id,
                 )
                 if result.isError():
                     _LOGGER.debug("Error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
                     continue
-                _process_registers(start_addr, result.registers)
+                self._process_registers(data, start_addr, result.registers)
             except ModbusException as err:
-                _LOGGER.debug("Modbus error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
+                _LOGGER.debug("Modbus error IR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
 
         return data
+
+    def _reset_serial_client(self) -> None:
+        """Force-close the serial client."""
+        if self._serial_client:
+            try:
+                self._serial_client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._serial_client = None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Public API
+    # ══════════════════════════════════════════════════════════════════════
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the heat pump."""
         try:
-            return await self.hass.async_add_executor_job(self._read_all_registers)
+            if self._connection_type == CONNECTION_TCP:
+                return await self._async_read_all_registers_tcp()
+            return await self.hass.async_add_executor_job(
+                self._read_all_registers_serial,
+            )
         except ConnectionError as err:
-            self._reset_client()
+            if self._connection_type == CONNECTION_TCP:
+                await self._async_disconnect_tcp()
+            else:
+                self._reset_serial_client()
             raise UpdateFailed(f"Connection error: {err}") from err
         except Exception as err:
-            self._reset_client()
+            if self._connection_type == CONNECTION_TCP:
+                await self._async_disconnect_tcp()
+            else:
+                self._reset_serial_client()
             raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
 
     async def async_write_register(self, address: int, value: int) -> None:
-        """Write a value to a holding register."""
-        def _write() -> None:
-            client = self._get_client()
-            result = client.write_register(address, value, device_id=self._slave_id)
-            if result.isError():
-                raise ModbusException(f"Failed to write register {address}")
+        """Write a value to a holding register (FC06)."""
+        if self._connection_type == CONNECTION_TCP:
+            await self._async_connect_tcp()
+            tx_id = self._next_tx_id()
+            frame = self._build_tcp_write_register(
+                tx_id, self._slave_id, address, value,
+            )
+            resp = await self._tcp_send_write_and_wait(frame, tx_id, "WRITE_RSP")
+            if resp is None:
+                raise ModbusException(f"Timeout writing HR[{address}]")
+            if resp.get("address") != address or resp.get("value") != value:
+                raise ModbusException(f"Write echo mismatch for HR[{address}]")
+        else:
+            def _write() -> None:
+                client = self._get_serial_client()
+                result = client.write_register(
+                    address, value, device_id=self._slave_id,
+                )
+                if result.isError():
+                    raise ModbusException(f"Failed to write register {address}")
 
-        await self.hass.async_add_executor_job(_write)
+            await self.hass.async_add_executor_job(_write)
+
         await self.async_request_refresh()
 
     async def async_write_coil(self, address: int, value: bool) -> None:
-        """Write a value to a coil."""
-        def _write() -> None:
-            client = self._get_client()
-            result = client.write_coil(address, value, device_id=self._slave_id)
-            if result.isError():
-                raise ModbusException(f"Failed to write coil {address}")
+        """Write a value to a coil (FC05, pulse-based)."""
+        if self._connection_type == CONNECTION_TCP:
+            await self._async_connect_tcp()
+            tx_id = self._next_tx_id()
+            frame = self._build_tcp_write_coil(
+                tx_id, self._slave_id, address, value,
+            )
+            resp = await self._tcp_send_write_and_wait(frame, tx_id, "COIL_RSP")
+            if resp is None:
+                raise ModbusException(f"Timeout writing coil {address}")
+        else:
+            def _write() -> None:
+                client = self._get_serial_client()
+                result = client.write_coil(
+                    address, value, device_id=self._slave_id,
+                )
+                if result.isError():
+                    raise ModbusException(f"Failed to write coil {address}")
 
-        await self.hass.async_add_executor_job(_write)
+            await self.hass.async_add_executor_job(_write)
+
         await self.async_request_refresh()
 
     async def async_close(self) -> None:
-        """Close the Modbus connection."""
-        if self._client:
-            await self.hass.async_add_executor_job(self._client.close)
-            self._client = None
+        """Close the Modbus connection (called on integration unload)."""
+        if self._connection_type == CONNECTION_TCP:
+            await self._async_disconnect_tcp()
+        elif self._serial_client:
+            await self.hass.async_add_executor_job(self._serial_client.close)
+            self._serial_client = None
