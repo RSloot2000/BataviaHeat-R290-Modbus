@@ -61,13 +61,11 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             "icon": "mdi:heat-pump",
         })
 
-    @property
-    def supported_features(self) -> ClimateEntityFeature:
-        """Return supported features; hide target temp when heating curve is active."""
-        base = ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
-        if not self._is_curve_active:
-            base |= ClimateEntityFeature.TARGET_TEMPERATURE
-        return base
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
+    )
 
     @property
     def _is_curve_active(self) -> bool:
