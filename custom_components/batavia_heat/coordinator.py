@@ -117,6 +117,15 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._tcp_buf: bytes = b""
         self._tx_counter: int = 0
 
+        # Serializes ALL bus access so reads and writes never race on the socket.
+        # Initialized lazily in _async_connect_tcp (needs running event loop).
+        self._bus_lock: asyncio.Lock | None = None
+
+        # Number of pending write operations. When > 0, the periodic read loop
+        # yields the lock immediately after the current batch so writes get
+        # the next free window without waiting a full update cycle.
+        self._write_pending: int = 0
+
         # Adaptive tablet detection
         self._tablet_seen: bool = False
         self._consecutive_no_tablet: int = 0
@@ -347,6 +356,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._host, self._tcp_port,
         )
         self._tcp_buf = b""
+        # Create lock here so it's always bound to the running event loop.
+        if self._bus_lock is None:
+            self._bus_lock = asyncio.Lock()
 
         # Send probe to activate DR164's TCP-to-RS485 bridge
         tx_id = self._next_tx_id()
@@ -378,92 +390,121 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         4. Retry failed reads in the next tablet cycle (max 3 attempts)
 
         When tablet is absent, uses direct reads with shorter timeouts.
+        Yields the bus lock immediately if a write is pending so user
+        actions are not delayed by a full update cycle.
         """
         await self._async_connect_tcp()
+        assert self._bus_lock is not None
 
-        data: dict[str, Any] = {
-            "holding": {},
-            "input": {},
-            "coil": {},
-            "discrete": {},
-        }
+        async with self._bus_lock:
+            data: dict[str, Any] = {
+                "holding": {},
+                "input": {},
+                "coil": {},
+                "discrete": {},
+            }
 
-        # Track pending reads: index → attempt count
-        pending: dict[int, int] = {i: 0 for i in range(len(_TCP_READ_GROUPS))}
-        results: dict[int, list[int]] = {}
-        max_cycles = _MAX_READ_RETRIES * 2  # Safety limit
+            # Track pending reads: index → attempt count
+            pending: dict[int, int] = {i: 0 for i in range(len(_TCP_READ_GROUPS))}
+            results: dict[int, list[int]] = {}
+            max_cycles = _MAX_READ_RETRIES * 2  # Safety limit
 
-        for _cycle in range(max_cycles):
-            if not pending:
-                break
+            for _cycle in range(max_cycles):
+                if not pending:
+                    break
 
-            synced = await self._tcp_wait_for_cycle_end()
-            if synced:
-                _LOGGER.debug(
-                    "Tablet cycle end → reading %d groups", len(pending),
-                )
-            else:
-                _LOGGER.debug(
-                    "Direct read mode → reading %d groups (tablet %s)",
-                    len(pending),
-                    "absent" if not self._tablet_seen else "missed",
-                )
-
-            completed: list[int] = []
-            for idx in sorted(pending.keys()):
-                fc, start, count = _TCP_READ_GROUPS[idx]
-                pending[idx] += 1
-
-                values = await self._tcp_send_one_read(fc, start, count)
-                if values is not None:
-                    results[idx] = values
-                    completed.append(idx)
-                elif pending[idx] >= _MAX_READ_RETRIES:
-                    _LOGGER.warning(
-                        "FC%d [%d] x%d failed after %d attempts",
-                        fc, start, count, _MAX_READ_RETRIES,
+                # Yield to pending writes: release the lock, sleep one scheduler
+                # tick so the write can acquire it, then re-acquire for next batch.
+                if self._write_pending > 0:
+                    _LOGGER.debug(
+                        "Write pending — yielding bus lock (%d groups remain)",
+                        len(pending),
                     )
-                    completed.append(idx)
+                    break
+
+                synced = await self._tcp_wait_for_cycle_end()
+                if synced:
+                    _LOGGER.debug(
+                        "Tablet cycle end → reading %d groups", len(pending),
+                    )
                 else:
                     _LOGGER.debug(
-                        "FC%d [%d] x%d attempt %d failed, will retry",
-                        fc, start, count, pending[idx],
+                        "Direct read mode → reading %d groups (tablet %s)",
+                        len(pending),
+                        "absent" if not self._tablet_seen else "missed",
                     )
 
-            for idx in completed:
-                del pending[idx]
+                completed: list[int] = []
+                for idx in sorted(pending.keys()):
+                    # Re-check write_pending between each register group
+                    if self._write_pending > 0:
+                        _LOGGER.debug("Write pending mid-cycle — stopping reads early")
+                        break
+                    fc, start, count = _TCP_READ_GROUPS[idx]
+                    pending[idx] += 1
 
-        # Process all successful results
-        for idx, values in results.items():
-            _fc, start, _count = _TCP_READ_GROUPS[idx]
-            self._process_registers(data, start, values)
+                    values = await self._tcp_send_one_read(fc, start, count)
+                    if values is not None:
+                        results[idx] = values
+                        completed.append(idx)
+                    elif pending[idx] >= _MAX_READ_RETRIES:
+                        _LOGGER.warning(
+                            "FC%d [%d] x%d failed after %d attempts",
+                            fc, start, count, _MAX_READ_RETRIES,
+                        )
+                        completed.append(idx)
+                    else:
+                        _LOGGER.debug(
+                            "FC%d [%d] x%d attempt %d failed, will retry",
+                            fc, start, count, pending[idx],
+                        )
 
-        if pending:
-            _LOGGER.warning(
-                "Could not read %d register groups after retries", len(pending),
-            )
+                for idx in completed:
+                    del pending[idx]
 
-        return data
+            # Process all successful results
+            for idx, values in results.items():
+                _fc, start, _count = _TCP_READ_GROUPS[idx]
+                self._process_registers(data, start, values)
+
+            if pending:
+                _LOGGER.debug(
+                    "Deferred %d register groups (write pending or max retries)",
+                    len(pending),
+                )
+
+            return data
 
     async def _tcp_send_write_and_wait(
         self, frame: bytes, tx_id: int, expected_type: str,
     ) -> dict | None:
-        """Send a write frame and wait for the matching response."""
+        """Send a write frame and wait for the matching response.
+
+        Acquires the bus lock so reads and writes never race on the socket.
+        Syncs to the tablet cycle end inside the lock.
+        """
         assert self._tcp_writer is not None
-        # Sync to tablet cycle to avoid bus collision
-        await self._tcp_wait_for_cycle_end()
+        assert self._bus_lock is not None
 
-        self._tcp_writer.write(frame)
-        await self._tcp_writer.drain()
+        self._write_pending += 1
+        try:
+            async with self._bus_lock:
+                # Sync to tablet cycle to avoid bus collision
+                await self._tcp_wait_for_cycle_end()
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _SINGLE_READ_TIMEOUT
-        while loop.time() < deadline:
-            frames = await self._tcp_read_available(timeout=0.02)
-            for f in frames:
-                if f.get("tx_id") == tx_id and f.get("type") == expected_type:
-                    return f
-        return None
+                self._tcp_writer.write(frame)
+                await self._tcp_writer.drain()
+
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + _SINGLE_READ_TIMEOUT
+                while loop.time() < deadline:
+                    frames = await self._tcp_read_available(timeout=0.02)
+                    for f in frames:
+                        if f.get("tx_id") == tx_id and f.get("type") == expected_type:
+                            return f
+                return None
+        finally:
+            self._write_pending -= 1
 
     # ══════════════════════════════════════════════════════════════════════
     # Serial: Standard pymodbus client (no tablet sharing needed)
@@ -560,15 +601,24 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Write a value to a holding register (FC06)."""
         if self._connection_type == CONNECTION_TCP:
             await self._async_connect_tcp()
-            tx_id = self._next_tx_id()
-            frame = self._build_tcp_write_register(
-                tx_id, self._slave_id, address, value,
-            )
-            resp = await self._tcp_send_write_and_wait(frame, tx_id, "WRITE_RSP")
-            if resp is None:
-                raise ModbusException(f"Timeout writing HR[{address}]")
-            if resp.get("address") != address or resp.get("value") != value:
-                raise ModbusException(f"Write echo mismatch for HR[{address}]")
+            last_err: str = "unknown"
+            for attempt in range(1, _MAX_READ_RETRIES + 1):
+                tx_id = self._next_tx_id()
+                frame = self._build_tcp_write_register(
+                    tx_id, self._slave_id, address, value,
+                )
+                resp = await self._tcp_send_write_and_wait(frame, tx_id, "WRITE_RSP")
+                if resp is None:
+                    last_err = f"timeout (attempt {attempt}/{_MAX_READ_RETRIES})"
+                    _LOGGER.debug("Write HR[%d] %s", address, last_err)
+                    continue
+                if resp.get("address") != address or resp.get("value") != value:
+                    last_err = f"echo mismatch (attempt {attempt}/{_MAX_READ_RETRIES})"
+                    _LOGGER.debug("Write HR[%d] %s", address, last_err)
+                    continue
+                break  # success
+            else:
+                raise ModbusException(f"Failed to write HR[{address}] after {_MAX_READ_RETRIES} attempts: {last_err}")
         else:
             def _write() -> None:
                 client = self._get_serial_client()
@@ -586,13 +636,20 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Write a value to a coil (FC05, pulse-based)."""
         if self._connection_type == CONNECTION_TCP:
             await self._async_connect_tcp()
-            tx_id = self._next_tx_id()
-            frame = self._build_tcp_write_coil(
-                tx_id, self._slave_id, address, value,
-            )
-            resp = await self._tcp_send_write_and_wait(frame, tx_id, "COIL_RSP")
-            if resp is None:
-                raise ModbusException(f"Timeout writing coil {address}")
+            last_err: str = "unknown"
+            for attempt in range(1, _MAX_READ_RETRIES + 1):
+                tx_id = self._next_tx_id()
+                frame = self._build_tcp_write_coil(
+                    tx_id, self._slave_id, address, value,
+                )
+                resp = await self._tcp_send_write_and_wait(frame, tx_id, "COIL_RSP")
+                if resp is None:
+                    last_err = f"timeout (attempt {attempt}/{_MAX_READ_RETRIES})"
+                    _LOGGER.debug("Write coil[%d] %s", address, last_err)
+                    continue
+                break  # success
+            else:
+                raise ModbusException(f"Failed to write coil {address} after {_MAX_READ_RETRIES} attempts: {last_err}")
         else:
             def _write() -> None:
                 client = self._get_serial_client()
