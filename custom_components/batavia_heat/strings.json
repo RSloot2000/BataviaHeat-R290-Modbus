@@ -52,7 +52,7 @@
         "data": {
           "energy_entity": "Electricity meter (kWh)",
           "offload_enabled": "Enable register offload",
-          "offload_url": "Offload URL (HTTP endpoint, leave empty to disable)"
+          "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)"
         }
       }
     }

@@ -40,16 +40,16 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 
 ## Features
 
-- **Climate entity:** heating on/off and target temperature control via pulse-coils
+- **Climate entity:** on/off, heat/cool/auto modes, target temperature and power-mode preset
 - **22 sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
 - **6 COP sensors:** built-in coefficient of performance tracking (current, today, week, month, year, all-time) — requires an external kWh meter entity
 - **1 binary sensor:** compressor running
-- **1 select entity:** power mode (standard / powerful / eco / auto)
+- **8 select entities:** power mode, auxiliary/external heat source mode, water pump operating & control type, lower-return pump sterilization/timed
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
-- **6 number entities:** heating curve (stooklijn) parameters and temperature limits
+- **~20 number entities:** heating curve (stooklijn) parameters, temperature limits, auto-cool/holiday setpoints and water pump tuning
 - **10-second polling interval** via Modbus TCP or RTU (Serial)
 - **Triple connection support:** DR164 WiFi gateway (Modbus TCP), ESP32-S3 proxy (Modbus TCP) or Modbus RTU via USB RS-485 adapter
-- **Optional register offload:** push raw registers to a NAS/HTTP endpoint for later decoding (disabled by default)
+- **Optional register offload:** push raw registers to a NAS/HTTP endpoint or local path for later decoding (disabled by default)
 - **Connection failure resilience:** COP calculations remain accurate after network outages
 
 ## Hardware Requirements
@@ -125,11 +125,13 @@ After initial setup, you can optionally link an external kWh meter to enable COP
 
 ### Options (register offload)
 
-Optionally push every register snapshot to a NAS/HTTP endpoint for later decoding (disabled by default):
+Optionally push every register snapshot to a NAS/HTTP endpoint or local directory for later decoding (disabled by default):
 
 1. Go to **Settings → Devices & Services** → **BataviaHeat R290** → **Configure**
-2. Enable **Register offload** and enter an **Offload URL** (an HTTP endpoint that accepts a JSON POST)
-3. Leave the URL empty to disable. Failures are logged and never interrupt normal updates
+2. Enable **Register offload** and enter an **Offload URL or local path**:
+   - HTTP endpoint that accepts a JSON POST (e.g. `http://nas:8099/`), or
+   - A local directory such as `/share/snooper` or `file:///share/snooper` (mount the NFS/CIFS share in **Settings → System → Storage** first; HA Core can only write to `/share`, `/media`, `/config`). Each poll writes a timestamped `snap_*.json`
+3. Leave the field empty to disable. Failures are logged and never interrupt normal updates
 
 ## Entities
 
@@ -192,7 +194,13 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 
 | Entity | Register | Options | Description |
 |--------|----------|---------|-------------|
-| Power mode | HR[6465] | Standard, Powerful, Eco, Auto | Operating power mode |
+| Power mode | HR[6465] | Standard, Powerful, Eco, Auto | N01 operating power mode |
+| Auxiliary heater mode | HR[7189] | Off, Heating only, DHW only, Heating+DHW | M39 auxiliary electric heater |
+| External heat source mode | HR[7190] | Off, Heating only, DHW only, Heating+DHW | M40 external heat source |
+| Pump operating mode | HR[6472] | Continuous, Stop at temp, Intermittent | P01 water pump mode |
+| Pump control type | HR[7232] | Speed, Flow, On-Off, Power | P02 pump control type |
+| Lower return pump sterilization | HR[7238] | Off, On | P07 |
+| Lower return pump timed | HR[7239] | Off, On | P08 |
 
 ### Number entities
 
@@ -204,14 +212,24 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 | Curve outdoor temp low | HR[6434] | −25–35 °C | Outdoor temperature at which maximum water temp applies |
 | Curve water temp mild | HR[6435] | 25–65 °C | Water temperature at mild outdoor conditions |
 | Curve water temp cold | HR[6436] | 25–65 °C | Water temperature at cold outdoor conditions |
+| Auto-cool min ambient | HR[7184] | 20–29 °C | M35 min outdoor temp for auto cooling |
+| Auto-cool max ambient | HR[7185] | 10–17 °C | M36 max outdoor temp for auto cooling |
+| Holiday heating temperature | HR[7186] | 20–25 °C | M37 holiday-away heating |
+| Holiday DHW temperature | HR[7187] | 20–25 °C | M38 holiday-away DHW |
+| Pump target speed setpoint | HR[7234] | 1000–4500 rpm | P03 pump target speed |
+| Pump manufacturer | HR[7235] | 0–8 | P04 pump manufacturer code |
+| Pump target flow setpoint | HR[7236] | 0–4500 L/h | P05 pump target flow |
+| Lower return pump interval | HR[7237] | 5–120 min | P06 lower-return pump interval |
+| Pump intermittent stop time | HR[6507] | min | P09 |
+| Pump intermittent run time | HR[6511] | min | P20 |
 
-The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M], M10+ = HR[6400 + M + 15].
+The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M], M10+ = HR[6400 + M + 15]. M35–M40 and most P-series live in a separate HR[7184–] / HR[7232–] block (sniffer-confirmed).
 
 ### Climate
 
 | Entity | Description |
 |--------|-------------|
-| Heat Pump | HVAC modes: **Heat** / **Off**. Current temperature from HR[1350] (T80 total water outlet), target temperature from HR[772] (calculated heating curve setpoint, read-only). When the heating curve is off (M11 = 0), the target temperature can be adjusted via HR[6402] (M02). On/off via coils 1024/1025. |
+| Heat Pump | HVAC modes: **Off** / **Heat** / **Cool** / **Auto**, plus power-mode presets (standard/powerful/eco/auto). Current temperature from HR[1350] (T80 total water outlet), target temperature from HR[772] (calculated heating curve setpoint, read-only). When the heating curve is off (M11 = 0), the target temperature can be adjusted via HR[6402] (M02). Working mode via HR[6400]; on/off via coils 1024/1025. |
 
 ## COP calculation
 

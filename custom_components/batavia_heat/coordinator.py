@@ -672,6 +672,14 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "holding": {str(k): v for k, v in data.get("holding", {}).items()},
             "input": {str(k): v for k, v in data.get("input", {}).items()},
         }
+        # Local directory (NFS/CIFS mount or HA /share, /media) → write a file.
+        if url.startswith("file://") or url.startswith("/"):
+            path = url[7:] if url.startswith("file://") else url
+            try:
+                await self.hass.async_add_executor_job(self._offload_to_file, path, payload)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Offload to %s failed: %s", path, err)
+            return
         try:
             session = async_get_clientsession(self.hass)
             async with session.post(url, json=payload, timeout=5) as resp:
@@ -679,6 +687,17 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.debug("Offload POST %s returned %s", url, resp.status)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Offload to %s failed: %s", url, err)
+
+    @staticmethod
+    def _offload_to_file(directory: str, payload: dict[str, Any]) -> None:
+        """Write the snapshot as a timestamped JSON file in a local directory."""
+        import json
+        import os
+
+        os.makedirs(directory, exist_ok=True)
+        name = f"snap_{payload['ts'].replace(':', '').replace('.', '')}.json"
+        with open(os.path.join(directory, name), "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the heat pump."""

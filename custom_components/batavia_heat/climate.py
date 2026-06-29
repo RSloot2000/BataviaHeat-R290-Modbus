@@ -66,7 +66,6 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
     _attr_max_temp = 60.0
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
     _attr_preset_modes = list(_PRESET_TO_MODE)
-    _enable_turn_on_off_backwards_compatibility = False
 
     def __init__(self, coordinator: BataviaHeatCoordinator) -> None:
         """Initialize the climate entity."""
