@@ -163,6 +163,37 @@
           "dhw_only": "DHW only",
           "heating_and_dhw": "Heating + DHW"
         }
+      },
+      "pump_operating_mode": {
+        "name": "Pump operating mode",
+        "state": {
+          "continuous": "Continuous",
+          "stop_at_temp": "Stop at temp",
+          "intermittent": "Intermittent"
+        }
+      },
+      "pump_control_type": {
+        "name": "Pump control type",
+        "state": {
+          "speed": "Speed",
+          "flow": "Flow",
+          "on_off": "On-Off",
+          "power": "Power"
+        }
+      },
+      "lower_return_pump_sterilization": {
+        "name": "Lower return pump sterilization",
+        "state": {
+          "off": "Off",
+          "on": "On"
+        }
+      },
+      "lower_return_pump_timed": {
+        "name": "Lower return pump timed",
+        "state": {
+          "off": "Off",
+          "on": "On"
+        }
       }
     },
     "climate": {

@@ -64,7 +64,7 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
     _attr_target_temperature_step = 1.0
     _attr_min_temp = 20.0
     _attr_max_temp = 60.0
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
+    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
     _attr_preset_modes = list(_PRESET_TO_MODE)
     _enable_turn_on_off_backwards_compatibility = False
 
@@ -158,7 +158,7 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             await self.coordinator.async_write_register(REG_WRITE_TEMP, int(temp))
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode: pulse off coil for OFF, else set working mode + power on."""
+        """Set working mode; OFF still pulses the off coil for compatibility."""
         if hvac_mode == HVACMode.OFF:
             await self.coordinator.async_write_coil(COIL_UNIT_OFF, True)
             return
@@ -166,6 +166,14 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             await self.coordinator.async_write_register(REG_WORKING_MODE, mode)
         if not self._is_unit_on:
             await self.coordinator.async_write_coil(COIL_UNIT_ON, True)
+
+    async def async_turn_on(self) -> None:
+        """Power the unit on (separate from working mode)."""
+        await self.coordinator.async_write_coil(COIL_UNIT_ON, True)
+
+    async def async_turn_off(self) -> None:
+        """Power the unit off (separate from working mode)."""
+        await self.coordinator.async_write_coil(COIL_UNIT_OFF, True)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the power mode (HR[6465]) from a preset."""
