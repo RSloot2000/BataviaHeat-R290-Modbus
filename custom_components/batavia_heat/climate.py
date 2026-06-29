@@ -64,7 +64,7 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
     _attr_target_temperature_step = 1.0
     _attr_min_temp = 20.0
     _attr_max_temp = 60.0
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
+    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
     _attr_preset_modes = list(_PRESET_TO_MODE)
     _enable_turn_on_off_backwards_compatibility = False
 
@@ -74,13 +74,12 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             "name": "climate",
             "icon": "mdi:heat-pump",
         })
-
-    _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE
-        | ClimateEntityFeature.PRESET_MODE
-        | ClimateEntityFeature.TURN_ON
-        | ClimateEntityFeature.TURN_OFF
-    )
+        self._attr_supported_features = (
+            ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.PRESET_MODE
+            | ClimateEntityFeature.TURN_ON
+            | ClimateEntityFeature.TURN_OFF
+        )
 
     @property
     def _is_curve_active(self) -> bool:
