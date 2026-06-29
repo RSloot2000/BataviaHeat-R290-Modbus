@@ -16,20 +16,25 @@ import struct
 from datetime import timedelta
 from typing import Any
 
-from pymodbus.client import ModbusSerialClient
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_BAUDRATE,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_OFFLOAD_ENABLED,
+    CONF_OFFLOAD_URL,
     CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
     CONF_TCP_PORT,
+    CONNECTION_ESP32,
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
@@ -132,6 +137,8 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Serial pymodbus client
         self._serial_client: ModbusSerialClient | None = None
+        # ESP32 pymodbus TCP client (proxy has its own bus, no tablet sharing)
+        self._esp32_client: ModbusTcpClient | None = None
 
         if self._connection_type == CONNECTION_SERIAL:
             self._serial_port = entry.data[CONF_SERIAL_PORT]
@@ -573,26 +580,135 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._serial_client = None
 
     # ══════════════════════════════════════════════════════════════════════
+    # ESP32: Standard pymodbus TCP client (proxy owns the bus, no tablet)
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _get_esp32_client(self) -> ModbusTcpClient:
+        """Get or create the ESP32 Modbus-TCP client."""
+        if self._esp32_client is None or not self._esp32_client.connected:
+            self._esp32_client = ModbusTcpClient(
+                host=self._host,
+                port=self._tcp_port,
+                timeout=5,
+            )
+            if not self._esp32_client.connect():
+                raise ConnectionError(
+                    f"Cannot connect to ESP32 proxy {self._host}:{self._tcp_port}"
+                )
+        return self._esp32_client
+
+    def _read_all_registers_esp32(self) -> dict[str, Any]:
+        """Read all registers via ESP32 proxy (standard pymodbus TCP)."""
+        client = self._get_esp32_client()
+        data: dict[str, Any] = {
+            "holding": {},
+            "input": {},
+            "coil": {},
+            "discrete": {},
+        }
+
+        for start_addr, count in _HOLDING_READ_GROUPS:
+            try:
+                result = client.read_holding_registers(
+                    start_addr, count=count, device_id=self._slave_id,
+                )
+                if result.isError():
+                    _LOGGER.debug("Error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
+                    continue
+                self._process_registers(data, start_addr, result.registers)
+            except ModbusException as err:
+                _LOGGER.debug("Modbus error HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
+
+        for start_addr, count in _INPUT_READ_GROUPS:
+            try:
+                result = client.read_input_registers(
+                    start_addr, count=count, device_id=self._slave_id,
+                )
+                if result.isError():
+                    _LOGGER.debug("Error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
+                    continue
+                self._process_registers(data, start_addr, result.registers)
+            except ModbusException as err:
+                _LOGGER.debug("Modbus error IR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
+
+        return data
+
+    def _reset_esp32_client(self) -> None:
+        """Force-close the ESP32 TCP client."""
+        if self._esp32_client:
+            try:
+                self._esp32_client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._esp32_client = None
+
+    # ══════════════════════════════════════════════════════════════════════
     # Public API
     # ══════════════════════════════════════════════════════════════════════
+
+    async def _async_offload(self, data: dict[str, Any]) -> None:
+        """Optionally push the register snapshot to a NAS endpoint for later decode.
+
+        Disabled unless CONF_OFFLOAD_ENABLED is true and CONF_OFFLOAD_URL is set.
+        Failures are logged and swallowed so they never break HA updates.
+        """
+        options = self.config_entry.options
+        if not options.get(CONF_OFFLOAD_ENABLED):
+            return
+        url = options.get(CONF_OFFLOAD_URL, "").strip()
+        if not url:
+            return
+        payload = {
+            "ts": dt_util.utcnow().isoformat(),
+            "host": getattr(self, "_host", None),
+            "slave_id": self._slave_id,
+            "holding": {str(k): v for k, v in data.get("holding", {}).items()},
+            "input": {str(k): v for k, v in data.get("input", {}).items()},
+        }
+        try:
+            session = async_get_clientsession(self.hass)
+            async with session.post(url, json=payload, timeout=5) as resp:
+                if resp.status >= 400:
+                    _LOGGER.debug("Offload POST %s returned %s", url, resp.status)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Offload to %s failed: %s", url, err)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the heat pump."""
         try:
             if self._connection_type == CONNECTION_TCP:
-                return await self._async_read_all_registers_tcp()
-            return await self.hass.async_add_executor_job(
-                self._read_all_registers_serial,
-            )
+                data = await self._async_read_all_registers_tcp()
+            elif self._connection_type == CONNECTION_ESP32:
+                data = await self.hass.async_add_executor_job(
+                    self._read_all_registers_esp32,
+                )
+            else:
+                data = await self.hass.async_add_executor_job(
+                    self._read_all_registers_serial,
+                )
+            await self._async_offload(data)
+            return data
         except ConnectionError as err:
             if self._connection_type == CONNECTION_TCP:
                 await self._async_disconnect_tcp()
+            elif self._connection_type == CONNECTION_ESP32:
+                self._reset_esp32_client()
             else:
                 self._reset_serial_client()
             raise UpdateFailed(f"Connection error: {err}") from err
         except Exception as err:
             if self._connection_type == CONNECTION_TCP:
                 await self._async_disconnect_tcp()
+            elif self._connection_type == CONNECTION_ESP32:
+                self._reset_esp32_client()
+            else:
+                self._reset_serial_client()
+            raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
+        except Exception as err:
+            if self._connection_type == CONNECTION_TCP:
+                await self._async_disconnect_tcp()
+            elif self._connection_type == CONNECTION_ESP32:
+                self._reset_esp32_client()
             else:
                 self._reset_serial_client()
             raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
@@ -621,7 +737,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise ModbusException(f"Failed to write HR[{address}] after {_MAX_READ_RETRIES} attempts: {last_err}")
         else:
             def _write() -> None:
-                client = self._get_serial_client()
+                client = (
+                    self._get_esp32_client()
+                    if self._connection_type == CONNECTION_ESP32
+                    else self._get_serial_client()
+                )
                 result = client.write_register(
                     address, value, device_id=self._slave_id,
                 )
@@ -652,7 +772,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise ModbusException(f"Failed to write coil {address} after {_MAX_READ_RETRIES} attempts: {last_err}")
         else:
             def _write() -> None:
-                client = self._get_serial_client()
+                client = (
+                    self._get_esp32_client()
+                    if self._connection_type == CONNECTION_ESP32
+                    else self._get_serial_client()
+                )
                 result = client.write_coil(
                     address, value, device_id=self._slave_id,
                 )
@@ -667,6 +791,10 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Close the Modbus connection (called on integration unload)."""
         if self._connection_type == CONNECTION_TCP:
             await self._async_disconnect_tcp()
+        elif self._connection_type == CONNECTION_ESP32:
+            if self._esp32_client:
+                await self.hass.async_add_executor_job(self._esp32_client.close)
+                self._esp32_client = None
         elif self._serial_client:
             await self.hass.async_add_executor_job(self._serial_client.close)
             self._serial_client = None

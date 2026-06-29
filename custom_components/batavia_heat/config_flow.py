@@ -24,9 +24,12 @@ from .const import (
     CONF_CONNECTION_TYPE,
     CONF_ENERGY_ENTITY,
     CONF_HOST,
+    CONF_OFFLOAD_ENABLED,
+    CONF_OFFLOAD_URL,
     CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
     CONF_TCP_PORT,
+    CONNECTION_ESP32,
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
@@ -114,6 +117,8 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
             self._connection_type = user_input[CONF_CONNECTION_TYPE]
             if self._connection_type == CONNECTION_SERIAL:
                 return await self.async_step_serial()
+            if self._connection_type == CONNECTION_ESP32:
+                return await self.async_step_esp32()
             return await self.async_step_tcp()
 
         data_schema = vol.Schema(
@@ -121,7 +126,8 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_CONNECTION_TYPE, default=CONNECTION_TCP): SelectSelector(
                     SelectSelectorConfig(
                         options=[
-                            SelectOptionDict(value=CONNECTION_TCP, label="Modbus TCP"),
+                            SelectOptionDict(value=CONNECTION_TCP, label="DR164 gateway (Modbus TCP)"),
+                            SelectOptionDict(value=CONNECTION_ESP32, label="ESP32 proxy (Modbus TCP)"),
                             SelectOptionDict(value=CONNECTION_SERIAL, label="Modbus RTU (Serial)"),
                         ],
                     )
@@ -174,6 +180,50 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="tcp", data_schema=data_schema, errors=errors
+        )
+
+    async def async_step_esp32(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2c: Configure ESP32 proxy (Modbus TCP). IP is user-supplied."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input[CONF_TCP_PORT] = int(user_input[CONF_TCP_PORT])
+            user_input[CONF_SLAVE_ID] = int(user_input[CONF_SLAVE_ID])
+
+            await self.async_set_unique_id(
+                f"esp32_{user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]}_{user_input[CONF_SLAVE_ID]}"
+            )
+            self._abort_if_unique_id_configured()
+
+            try:
+                await validate_tcp_connection(self.hass, user_input)
+            except ConnectionError:
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected exception during setup")
+                errors["base"] = "unknown"
+            else:
+                return self.async_create_entry(
+                    title=f"BataviaHeat R290 ESP32 ({user_input[CONF_HOST]})",
+                    data={CONF_CONNECTION_TYPE: CONNECTION_ESP32, **user_input},
+                )
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_TCP_PORT, default=DEFAULT_TCP_PORT): NumberSelector(
+                    NumberSelectorConfig(min=1, max=65535, step=1, mode=NumberSelectorMode.BOX)
+                ),
+                vol.Required(CONF_SLAVE_ID, default=DEFAULT_SLAVE_ID): NumberSelector(
+                    NumberSelectorConfig(min=1, max=247, step=1, mode=NumberSelectorMode.BOX)
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="esp32", data_schema=data_schema, errors=errors
         )
 
     async def async_step_serial(
@@ -236,9 +286,14 @@ class BataviaHeatOptionsFlow(OptionsFlow):
             # Ensure empty optional field is stored explicitly
             if CONF_ENERGY_ENTITY not in user_input:
                 user_input[CONF_ENERGY_ENTITY] = ""
+            if CONF_OFFLOAD_URL not in user_input:
+                user_input[CONF_OFFLOAD_URL] = ""
+            user_input.setdefault(CONF_OFFLOAD_ENABLED, False)
             return self.async_create_entry(data=user_input)
 
         current = self._config_entry.options.get(CONF_ENERGY_ENTITY, "")
+        offload_enabled = self._config_entry.options.get(CONF_OFFLOAD_ENABLED, False)
+        offload_url = self._config_entry.options.get(CONF_OFFLOAD_URL, "")
         schema = vol.Schema(
             {
                 vol.Optional(
@@ -250,6 +305,13 @@ class BataviaHeatOptionsFlow(OptionsFlow):
                         device_class="energy",
                     )
                 ),
+                vol.Optional(
+                    CONF_OFFLOAD_ENABLED, default=offload_enabled,
+                ): bool,
+                vol.Optional(
+                    CONF_OFFLOAD_URL,
+                    description={"suggested_value": offload_url} if offload_url else {},
+                ): str,
             }
         )
 

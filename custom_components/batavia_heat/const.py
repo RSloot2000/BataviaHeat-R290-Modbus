@@ -17,8 +17,13 @@ CONF_SERIAL_PORT = "serial_port"
 CONF_BAUDRATE = "baudrate"
 CONF_ENERGY_ENTITY = "energy_entity"
 
-CONNECTION_TCP = "tcp"
-CONNECTION_SERIAL = "serial"
+CONNECTION_TCP = "tcp"          # DR164 RS485-WiFi gateway (tablet bus-sharing)
+CONNECTION_SERIAL = "serial"    # Direct USB/RS485 dongle
+CONNECTION_ESP32 = "esp32"      # ESP32-S3 Modbus-TCP proxy (own bus, no tablet)
+
+# === Optional register offload (push raw registers to NAS for later decode) ===
+CONF_OFFLOAD_ENABLED = "offload_enabled"
+CONF_OFFLOAD_URL = "offload_url"  # HTTP endpoint, blank = disabled
 
 # Update interval in seconds (10s is comfortable for DR164 gateway latency)
 DEFAULT_SCAN_INTERVAL = 10

@@ -9,8 +9,17 @@
         }
       },
       "tcp": {
-        "title": "Modbus TCP Connection",
-        "description": "Configure the TCP connection to your Modbus gateway (e.g. DR164 RS485-to-WiFi converter).",
+        "title": "DR164 Gateway (Modbus TCP)",
+        "description": "Configure the TCP connection to your DR164 RS485-to-WiFi converter. Enter the IP address of your gateway.",
+        "data": {
+          "host": "Host / IP address",
+          "tcp_port": "TCP port",
+          "slave_id": "Modbus slave ID"
+        }
+      },
+      "esp32": {
+        "title": "ESP32 Proxy (Modbus TCP)",
+        "description": "Configure the connection to your ESP32 Modbus-TCP proxy. Enter the IP address you assigned to the ESP32.",
         "data": {
           "host": "Host / IP address",
           "tcp_port": "TCP port",
@@ -39,9 +48,11 @@
     "step": {
       "init": {
         "title": "BataviaHeat R290 Options",
-        "description": "Optionally select your electricity meter to enable COP sensors. Leave empty to disable COP sensors.",
+        "description": "Optionally select your electricity meter to enable COP sensors. Leave empty to disable COP sensors. Optionally enable register offload to push raw registers to a NAS endpoint for later decoding.",
         "data": {
-          "energy_entity": "Electricity meter (kWh)"
+          "energy_entity": "Electricity meter (kWh)",
+          "offload_enabled": "Enable register offload",
+          "offload_url": "Offload URL (HTTP endpoint, leave empty to disable)"
         }
       }
     }
