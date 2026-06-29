@@ -105,6 +105,30 @@ for _addr, _info in HOLDING_REGISTERS.items():
 for _addr, _info in INPUT_REGISTERS.items():
     _ADDR_MAP[_addr] = ("input", _info)
 
+# ── Snapshot consolidation ──
+# How often to merge offloaded snap_*.json files into snapshots.db.
+CONSOLIDATE_INTERVAL = timedelta(minutes=30)
+# Database filename created inside the offload directory.
+CONSOLIDATE_DB_NAME = "snapshots.db"
+# Long-format schema: one snapshot row + one row per register reading.
+_CONSOLIDATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS snapshots (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        TEXT NOT NULL,
+    host      TEXT,
+    slave_id  INTEGER
+);
+CREATE TABLE IF NOT EXISTS readings (
+    snapshot_id INTEGER NOT NULL,
+    reg_type    TEXT NOT NULL,
+    address     INTEGER NOT NULL,
+    value       INTEGER,
+    FOREIGN KEY (snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
+CREATE INDEX IF NOT EXISTS idx_readings_addr ON readings(reg_type, address);
+"""
+
 
 class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator to manage fetching data from BataviaHeat R290 via Modbus."""
@@ -141,6 +165,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Adaptive tablet detection
         self._tablet_seen: bool = False
         self._consecutive_no_tablet: int = 0
+
+        # Guards against overlapping snapshot consolidation runs.
+        self._consolidating: bool = False
 
         # Serial pymodbus client
         self._serial_client: ModbusSerialClient | None = None
@@ -676,9 +703,12 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if url.startswith("file://") or url.startswith("/"):
             path = url[7:] if url.startswith("file://") else url
             try:
-                await self.hass.async_add_executor_job(self._offload_to_file, path, payload)
+                written = await self.hass.async_add_executor_job(
+                    self._offload_to_file, path, payload
+                )
+                _LOGGER.debug("Offload wrote snapshot to %s", written)
             except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Offload to %s failed: %s", path, err)
+                _LOGGER.warning("Offload to %s failed: %s", path, err)
             return
         try:
             session = async_get_clientsession(self.hass)
@@ -689,15 +719,126 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Offload to %s failed: %s", url, err)
 
     @staticmethod
-    def _offload_to_file(directory: str, payload: dict[str, Any]) -> None:
-        """Write the snapshot as a timestamped JSON file in a local directory."""
+    def _offload_to_file(directory: str, payload: dict[str, Any]) -> str:
+        """Write the snapshot as a timestamped JSON file in a local directory.
+
+        Returns the full path written. Raises on permission/IO errors so the
+        caller can surface them.
+        """
         import json
         import os
 
         os.makedirs(directory, exist_ok=True)
         name = f"snap_{payload['ts'].replace(':', '').replace('.', '')}.json"
-        with open(os.path.join(directory, name), "w", encoding="utf-8") as fh:
+        full = os.path.join(directory, name)
+        with open(full, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
+        return full
+
+    def _offload_local_dir(self) -> str | None:
+        """Return the local offload directory, or None if offload isn't local.
+
+        Snapshots are only consolidated when the offload target is a local path
+        (NFS/CIFS mount, or HA /share, /media). HTTP targets and disabled
+        offload have nothing to consolidate.
+        """
+        options = self.config_entry.options
+        if not options.get(CONF_OFFLOAD_ENABLED):
+            return None
+        url = options.get(CONF_OFFLOAD_URL, "").strip()
+        if not url:
+            return None
+        if url.startswith("file://"):
+            return url[7:]
+        if url.startswith("/"):
+            return url
+        return None
+
+    async def async_consolidate_snapshots(self, _now: Any = None) -> None:
+        """Merge offloaded snap_*.json files into snapshots.db, then delete them.
+
+        Runs unconditionally on a fixed schedule whenever offload writes to a
+        local directory. Failures are logged and swallowed so they never affect
+        HA. An in-flight guard prevents overlapping runs.
+        """
+        directory = self._offload_local_dir()
+        if not directory or self._consolidating:
+            return
+        self._consolidating = True
+        try:
+            merged, readings = await self.hass.async_add_executor_job(
+                self._consolidate_dir, directory
+            )
+            if merged:
+                _LOGGER.info(
+                    "Consolidated %d snapshot(s) (%d readings) into %s",
+                    merged, readings, CONSOLIDATE_DB_NAME,
+                )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Snapshot consolidation failed: %s", err)
+        finally:
+            self._consolidating = False
+
+    @staticmethod
+    def _consolidate_dir(directory: str) -> tuple[int, int]:
+        """Blocking: ingest all snap_*.json in *directory* into snapshots.db.
+
+        Returns (files_merged, readings_stored). Each file is committed and
+        deleted individually so an interruption never loses data or re-ingests.
+        Uses the rollback journal (not WAL) because the database typically lives
+        on a network share where WAL is unsupported.
+        """
+        import glob
+        import json
+        import os
+        import sqlite3
+
+        files = sorted(glob.glob(os.path.join(directory, "snap_*.json")))
+        if not files:
+            return (0, 0)
+
+        db_path = os.path.join(directory, CONSOLIDATE_DB_NAME)
+        conn = sqlite3.connect(db_path)
+        merged = 0
+        readings = 0
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.executescript(_CONSOLIDATE_SCHEMA)
+            for path in files:
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        payload = json.load(fh)
+                except (OSError, json.JSONDecodeError):
+                    continue
+                cur = conn.execute(
+                    "INSERT INTO snapshots (ts, host, slave_id) VALUES (?, ?, ?)",
+                    (payload.get("ts"), payload.get("host"), payload.get("slave_id")),
+                )
+                snapshot_id = cur.lastrowid
+                rows: list[tuple[int, str, int, Any]] = []
+                for reg_type in ("holding", "input"):
+                    for addr, value in (payload.get(reg_type) or {}).items():
+                        try:
+                            rows.append((snapshot_id, reg_type, int(addr), value))
+                        except (ValueError, TypeError):
+                            continue
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO readings (snapshot_id, reg_type, address, value) "
+                        "VALUES (?, ?, ?, ?)",
+                        rows,
+                    )
+                conn.commit()
+                readings += len(rows)
+                merged += 1
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        finally:
+            conn.close()
+        return (merged, readings)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the heat pump."""

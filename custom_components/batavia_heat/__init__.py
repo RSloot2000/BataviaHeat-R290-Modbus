@@ -6,9 +6,10 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN
-from .coordinator import BataviaHeatCoordinator
+from .coordinator import CONSOLIDATE_INTERVAL, BataviaHeatCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+
+    # Always consolidate offloaded snap_*.json files into snapshots.db on a
+    # fixed schedule (and once now). No-op when offload isn't to a local path.
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass, coordinator.async_consolidate_snapshots, CONSOLIDATE_INTERVAL,
+        )
+    )
+    entry.async_create_background_task(
+        hass,
+        coordinator.async_consolidate_snapshots(),
+        name="batavia_heat_consolidate_startup",
+    )
     return True
 
 
