@@ -24,6 +24,10 @@ CONNECTION_ESP32 = "esp32"      # ESP32-S3 Modbus-TCP proxy (own bus, no tablet)
 # === Optional register offload (push raw registers to NAS for later decode) ===
 CONF_OFFLOAD_ENABLED = "offload_enabled"
 CONF_OFFLOAD_URL = "offload_url"  # HTTP endpoint, blank = disabled
+# Max size of the consolidated snapshots.db in MB. When exceeded, the oldest
+# snapshots are pruned on each append until the file fits again. 0 = no limit.
+CONF_OFFLOAD_DB_MAX_MB = "offload_db_max_mb"
+DEFAULT_OFFLOAD_DB_MAX_MB = 0
 
 # Update interval in seconds (10s is comfortable for DR164 gateway latency)
 DEFAULT_SCAN_INTERVAL = 10

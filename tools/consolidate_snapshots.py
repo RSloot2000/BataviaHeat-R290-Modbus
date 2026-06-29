@@ -31,6 +31,9 @@ Usage:
     # Run continuously, consolidating every 5 minutes:
     python consolidate_snapshots.py --dir /media/Modbus --db /media/Modbus/snapshots.db --interval 300
 
+    # Cap the database at 2 GB (prune oldest snapshots when exceeded):
+    python consolidate_snapshots.py --dir /media/Modbus --db /media/Modbus/snapshots.db --max-mb 2048
+
 Only the standard library is required.
 """
 from __future__ import annotations
@@ -61,11 +64,21 @@ CREATE INDEX IF NOT EXISTS idx_readings_addr ON readings(reg_type, address);
 """
 
 
-def _open_db(db_path: Path) -> sqlite3.Connection:
-    """Open the SQLite database, applying the schema and durability pragmas."""
+def _open_db(db_path: Path, max_bytes: int = 0) -> sqlite3.Connection:
+    """Open the SQLite database, applying the schema and durability pragmas.
+
+    When *max_bytes* > 0, enable auto_vacuum=FULL and the rollback journal so
+    pruning actually shrinks the file and the size cap can be enforced.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    if max_bytes > 0:
+        conn.execute("PRAGMA journal_mode=DELETE;")
+        if conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 1:
+            conn.execute("PRAGMA auto_vacuum=FULL;")
+            conn.execute("VACUUM;")
+    else:
+        conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.executescript(SCHEMA)
     return conn
@@ -80,7 +93,7 @@ def _ingest_file(conn: sqlite3.Connection, path: Path) -> int:
         "INSERT INTO snapshots (ts, host, slave_id) VALUES (?, ?, ?)",
         (data.get("ts"), data.get("host"), data.get("slave_id")),
     )
-    snapshot_id = cur.lastrowid
+    snapshot_id = int(cur.lastrowid or 0)
 
     rows: list[tuple[int, str, int, int | None]] = []
     for reg_type in ("holding", "input"):
@@ -98,20 +111,23 @@ def _ingest_file(conn: sqlite3.Connection, path: Path) -> int:
     return len(rows)
 
 
-def consolidate(directory: Path, db_path: Path, keep: bool) -> tuple[int, int]:
+def consolidate(directory: Path, db_path: Path, keep: bool,
+                max_bytes: int = 0) -> tuple[int, int, int]:
     """Consolidate all snap_*.json files in *directory* into *db_path*.
 
-    Returns (files_processed, readings_stored). Each file is committed
-    individually, then deleted (unless *keep*), so an interruption never loses
-    data and never re-ingests the same file.
+    Returns (files_processed, readings_stored, snapshots_pruned). Each file is
+    committed individually, then deleted (unless *keep*), so an interruption
+    never loses data and never re-ingests the same file. When *max_bytes* > 0,
+    the oldest snapshots are pruned after appending until the file fits.
     """
     files = sorted(directory.glob("snap_*.json"))
-    if not files:
-        return (0, 0)
+    if not files and max_bytes <= 0:
+        return (0, 0, 0)
 
-    conn = _open_db(db_path)
+    conn = _open_db(db_path, max_bytes)
     processed = 0
     readings = 0
+    pruned = 0
     try:
         for path in files:
             try:
@@ -128,9 +144,29 @@ def consolidate(directory: Path, db_path: Path, keep: bool) -> tuple[int, int]:
                     path.unlink()
                 except OSError as err:
                     print(f"  ! could not delete {path.name}: {err}", file=sys.stderr)
+        if max_bytes > 0:
+            while db_path.stat().st_size > max_bytes:
+                ids = [
+                    r[0] for r in conn.execute(
+                        "SELECT id FROM snapshots ORDER BY id ASC LIMIT 200"
+                    ).fetchall()
+                ]
+                if not ids:
+                    break
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(
+                    f"DELETE FROM readings WHERE snapshot_id IN ({placeholders})", ids
+                )
+                conn.execute(
+                    f"DELETE FROM snapshots WHERE id IN ({placeholders})", ids
+                )
+                conn.commit()
+                pruned += len(ids)
+                if len(ids) < 200:
+                    break
     finally:
         conn.close()
-    return (processed, readings)
+    return (processed, readings, pruned)
 
 
 def main() -> int:
@@ -144,17 +180,26 @@ def main() -> int:
                         help="Keep JSON files after ingesting (default: delete)")
     parser.add_argument("--interval", type=int, default=0,
                         help="Run continuously, consolidating every N seconds (0 = run once)")
+    parser.add_argument("--max-mb", type=int, default=0,
+                        help="Max database size in MB; prune oldest snapshots when exceeded (0 = unlimited)")
     args = parser.parse_args()
 
     if not args.dir.is_dir():
         print(f"Directory not found: {args.dir}", file=sys.stderr)
         return 1
 
+    max_bytes = args.max_mb * 1024 * 1024 if args.max_mb > 0 else 0
+
     def _run_once() -> None:
-        files, readings = consolidate(args.dir, args.db, args.keep)
+        files, readings, pruned = consolidate(args.dir, args.db, args.keep, max_bytes)
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        parts = []
         if files:
-            print(f"[{stamp}] merged {files} file(s), {readings} reading(s) -> {args.db}")
+            parts.append(f"merged {files} file(s), {readings} reading(s)")
+        if pruned:
+            parts.append(f"pruned {pruned} old snapshot(s)")
+        if parts:
+            print(f"[{stamp}] {', '.join(parts)} -> {args.db}")
         else:
             print(f"[{stamp}] no new snapshots")
 

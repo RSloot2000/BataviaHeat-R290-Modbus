@@ -25,6 +25,7 @@ from .const import (
     CONF_CONNECTION_TYPE,
     CONF_ENERGY_ENTITY,
     CONF_HOST,
+    CONF_OFFLOAD_DB_MAX_MB,
     CONF_OFFLOAD_ENABLED,
     CONF_OFFLOAD_URL,
     CONF_SERIAL_PORT,
@@ -34,6 +35,7 @@ from .const import (
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
+    DEFAULT_OFFLOAD_DB_MAX_MB,
     DEFAULT_SLAVE_ID,
     DEFAULT_TCP_PORT,
     DOMAIN,
@@ -103,6 +105,8 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._connection_type: str = CONNECTION_TCP
+        self._entry_data: dict[str, Any] = {}
+        self._entry_title: str = ""
 
     @staticmethod
     @callback
@@ -162,10 +166,11 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during setup")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(
-                    title=f"BataviaHeat R290 ({user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]})",
-                    data={CONF_CONNECTION_TYPE: CONNECTION_TCP, **user_input},
+                self._entry_title = (
+                    f"BataviaHeat R290 ({user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]})"
                 )
+                self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_TCP, **user_input}
+                return await self.async_step_advanced()
 
         data_schema = vol.Schema(
             {
@@ -206,10 +211,9 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during setup")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(
-                    title=f"BataviaHeat R290 ESP32 ({user_input[CONF_HOST]})",
-                    data={CONF_CONNECTION_TYPE: CONNECTION_ESP32, **user_input},
-                )
+                self._entry_title = f"BataviaHeat R290 ESP32 ({user_input[CONF_HOST]})"
+                self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_ESP32, **user_input}
+                return await self.async_step_advanced()
 
         data_schema = vol.Schema(
             {
@@ -250,10 +254,9 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception during setup")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(
-                    title=f"BataviaHeat R290 ({user_input[CONF_SERIAL_PORT]})",
-                    data={CONF_CONNECTION_TYPE: CONNECTION_SERIAL, **user_input},
-                )
+                self._entry_title = f"BataviaHeat R290 ({user_input[CONF_SERIAL_PORT]})"
+                self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_SERIAL, **user_input}
+                return await self.async_step_advanced()
 
         data_schema = vol.Schema(
             {
@@ -271,6 +274,31 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="serial", data_schema=data_schema, errors=errors
         )
 
+    async def async_step_advanced(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Final step: optional advanced options (energy meter, register offload).
+
+        Opens automatically after the connection is validated. Every field is
+        optional — leave them all empty to skip the advanced features.
+        """
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._entry_title,
+                data=self._entry_data,
+                options=_normalize_advanced_options(user_input),
+            )
+
+        dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
+        schema = _build_advanced_schema(
+            energy_entity="",
+            offload_enabled=False,
+            offload_url="",
+            offload_db_max_mb=DEFAULT_OFFLOAD_DB_MAX_MB,
+            dir_options=dir_options,
+        )
+        return self.async_show_form(step_id="advanced", data_schema=schema)
+
 
 class BataviaHeatOptionsFlow(OptionsFlow):
     """Handle options flow for BataviaHeat R290."""
@@ -284,51 +312,82 @@ class BataviaHeatOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Ensure empty optional field is stored explicitly
-            if CONF_ENERGY_ENTITY not in user_input:
-                user_input[CONF_ENERGY_ENTITY] = ""
-            if CONF_OFFLOAD_URL not in user_input:
-                user_input[CONF_OFFLOAD_URL] = ""
-            user_input.setdefault(CONF_OFFLOAD_ENABLED, False)
-            return self.async_create_entry(data=user_input)
+            return self.async_create_entry(
+                data=_normalize_advanced_options(user_input)
+            )
 
-        current = self._config_entry.options.get(CONF_ENERGY_ENTITY, "")
-        offload_enabled = self._config_entry.options.get(CONF_OFFLOAD_ENABLED, False)
-        offload_url = self._config_entry.options.get(CONF_OFFLOAD_URL, "")
         dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
-        # Keep the currently configured value selectable even if it isn't a folder.
-        if offload_url and offload_url not in dir_options:
-            dir_options.append(offload_url)
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_ENERGY_ENTITY,
-                    description={"suggested_value": current} if current else {},
-                ): EntitySelector(
-                    EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="energy",
-                    )
-                ),
-                vol.Optional(
-                    CONF_OFFLOAD_ENABLED, default=offload_enabled,
-                ): bool,
-                vol.Optional(
-                    CONF_OFFLOAD_URL,
-                    description={"suggested_value": offload_url} if offload_url else {},
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(value=d, label=d) for d in dir_options
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                    )
-                ),
-            }
+        schema = _build_advanced_schema(
+            energy_entity=self._config_entry.options.get(CONF_ENERGY_ENTITY, ""),
+            offload_enabled=self._config_entry.options.get(CONF_OFFLOAD_ENABLED, False),
+            offload_url=self._config_entry.options.get(CONF_OFFLOAD_URL, ""),
+            offload_db_max_mb=self._config_entry.options.get(
+                CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB
+            ),
+            dir_options=dir_options,
         )
-
         return self.async_show_form(step_id="init", data_schema=schema)
+
+
+def _build_advanced_schema(
+    energy_entity: str,
+    offload_enabled: bool,
+    offload_url: str,
+    offload_db_max_mb: float,
+    dir_options: list[str],
+) -> vol.Schema:
+    """Build the shared advanced-options schema (energy meter + register offload).
+
+    Used by both the initial config flow's advanced step and the options flow.
+    All fields are optional so the user can leave everything empty.
+    """
+    # Keep the currently configured value selectable even if it isn't a folder.
+    if offload_url and offload_url not in dir_options:
+        dir_options.append(offload_url)
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_ENERGY_ENTITY,
+                description={"suggested_value": energy_entity} if energy_entity else {},
+            ): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="energy")
+            ),
+            vol.Optional(
+                CONF_OFFLOAD_ENABLED, default=offload_enabled,
+            ): bool,
+            vol.Optional(
+                CONF_OFFLOAD_URL,
+                description={"suggested_value": offload_url} if offload_url else {},
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[SelectOptionDict(value=d, label=d) for d in dir_options],
+                    mode=SelectSelectorMode.DROPDOWN,
+                    custom_value=True,
+                )
+            ),
+            vol.Optional(
+                CONF_OFFLOAD_DB_MAX_MB, default=offload_db_max_mb,
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=1024000,
+                    step=1,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="MB",
+                )
+            ),
+        }
+    )
+
+
+def _normalize_advanced_options(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Fill in defaults for any advanced fields the user left empty."""
+    options = dict(user_input)
+    options.setdefault(CONF_ENERGY_ENTITY, "")
+    options.setdefault(CONF_OFFLOAD_URL, "")
+    options.setdefault(CONF_OFFLOAD_ENABLED, False)
+    options.setdefault(CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB)
+    return options
 
 
 def _discover_offload_dirs() -> list[str]:

@@ -29,6 +29,7 @@ from .const import (
     CONF_BAUDRATE,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_OFFLOAD_DB_MAX_MB,
     CONF_OFFLOAD_ENABLED,
     CONF_OFFLOAD_URL,
     CONF_SERIAL_PORT,
@@ -38,6 +39,7 @@ from .const import (
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
+    DEFAULT_OFFLOAD_DB_MAX_MB,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     HOLDING_REGISTERS,
@@ -766,13 +768,22 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         self._consolidating = True
         try:
-            merged, readings = await self.hass.async_add_executor_job(
-                self._consolidate_dir, directory
+            max_mb = self.config_entry.options.get(
+                CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB
+            )
+            max_bytes = int(max_mb) * 1024 * 1024 if max_mb else 0
+            merged, readings, pruned = await self.hass.async_add_executor_job(
+                self._consolidate_dir, directory, max_bytes
             )
             if merged:
                 _LOGGER.info(
                     "Consolidated %d snapshot(s) (%d readings) into %s",
                     merged, readings, CONSOLIDATE_DB_NAME,
+                )
+            if pruned:
+                _LOGGER.info(
+                    "Pruned %d oldest snapshot(s) to keep %s under %d MB",
+                    pruned, CONSOLIDATE_DB_NAME, int(max_mb),
                 )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Snapshot consolidation failed: %s", err)
@@ -780,13 +791,17 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._consolidating = False
 
     @staticmethod
-    def _consolidate_dir(directory: str) -> tuple[int, int]:
+    def _consolidate_dir(directory: str, max_bytes: int = 0) -> tuple[int, int, int]:
         """Blocking: ingest all snap_*.json in *directory* into snapshots.db.
 
-        Returns (files_merged, readings_stored). Each file is committed and
-        deleted individually so an interruption never loses data or re-ingests.
-        Uses the rollback journal (not WAL) because the database typically lives
-        on a network share where WAL is unsupported.
+        Returns (files_merged, readings_stored, snapshots_pruned). Each file is
+        committed and deleted individually so an interruption never loses data
+        or re-ingests. Uses the rollback journal (not WAL) because the database
+        typically lives on a network share where WAL is unsupported.
+
+        When *max_bytes* > 0 the oldest snapshots are pruned after appending
+        until the database file fits within the limit. auto_vacuum=FULL keeps
+        the file from growing back, so the size cap is actually enforced.
         """
         import glob
         import json
@@ -794,16 +809,23 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         import sqlite3
 
         files = sorted(glob.glob(os.path.join(directory, "snap_*.json")))
-        if not files:
-            return (0, 0)
+        if not files and max_bytes <= 0:
+            return (0, 0, 0)
 
         db_path = os.path.join(directory, CONSOLIDATE_DB_NAME)
         conn = sqlite3.connect(db_path)
         merged = 0
         readings = 0
+        pruned = 0
         try:
             conn.execute("PRAGMA journal_mode=DELETE;")
             conn.execute("PRAGMA synchronous=NORMAL;")
+            # Enable auto_vacuum so pruning actually shrinks the file. Converting
+            # an existing non-auto_vacuum database requires a one-time VACUUM.
+            if max_bytes > 0:
+                if conn.execute("PRAGMA auto_vacuum").fetchone()[0] != 1:
+                    conn.execute("PRAGMA auto_vacuum=FULL;")
+                    conn.execute("VACUUM;")
             conn.executescript(_CONSOLIDATE_SCHEMA)
             for path in files:
                 try:
@@ -836,9 +858,31 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     os.remove(path)
                 except OSError:
                     pass
+            # Enforce the size cap by deleting the oldest snapshots in batches.
+            if max_bytes > 0:
+                while os.path.getsize(db_path) > max_bytes:
+                    ids = [
+                        r[0] for r in conn.execute(
+                            "SELECT id FROM snapshots ORDER BY id ASC LIMIT 200"
+                        ).fetchall()
+                    ]
+                    if not ids:
+                        break
+                    placeholders = ",".join("?" * len(ids))
+                    conn.execute(
+                        f"DELETE FROM readings WHERE snapshot_id IN ({placeholders})",
+                        ids,
+                    )
+                    conn.execute(
+                        f"DELETE FROM snapshots WHERE id IN ({placeholders})", ids
+                    )
+                    conn.commit()
+                    pruned += len(ids)
+                    if len(ids) < 200:
+                        break
         finally:
             conn.close()
-        return (merged, readings)
+        return (merged, readings, pruned)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the heat pump."""

@@ -34,6 +34,16 @@
           "slave_id": "Modbus slave ID",
           "baudrate": "Baudrate (default: 9600)"
         }
+      },
+      "advanced": {
+        "title": "Advanced Options (optional)",
+        "description": "Optional features. Leave every field empty to skip them \u2014 you can always change these later via the integration's Configure button. Select an electricity meter to enable COP sensors, and/or enable register offload to store raw registers for later decoding.",
+        "data": {
+          "energy_entity": "Electricity meter (kWh)",
+          "offload_enabled": "Enable register offload",
+          "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)",
+          "offload_db_max_mb": "Max snapshots.db size in MB (0 = unlimited; oldest entries are pruned when exceeded)"
+        }
       }
     },
     "error": {
@@ -52,7 +62,8 @@
         "data": {
           "energy_entity": "Electricity meter (kWh)",
           "offload_enabled": "Enable register offload",
-          "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)"
+          "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)",
+          "offload_db_max_mb": "Max snapshots.db size in MB (0 = unlimited; oldest entries are pruned when exceeded)"
         }
       }
     }
