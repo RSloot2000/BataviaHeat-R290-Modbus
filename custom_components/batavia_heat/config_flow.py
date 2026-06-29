@@ -17,6 +17,7 @@ from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
@@ -294,6 +295,10 @@ class BataviaHeatOptionsFlow(OptionsFlow):
         current = self._config_entry.options.get(CONF_ENERGY_ENTITY, "")
         offload_enabled = self._config_entry.options.get(CONF_OFFLOAD_ENABLED, False)
         offload_url = self._config_entry.options.get(CONF_OFFLOAD_URL, "")
+        dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
+        # Keep the currently configured value selectable even if it isn't a folder.
+        if offload_url and offload_url not in dir_options:
+            dir_options.append(offload_url)
         schema = vol.Schema(
             {
                 vol.Optional(
@@ -311,8 +316,43 @@ class BataviaHeatOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_OFFLOAD_URL,
                     description={"suggested_value": offload_url} if offload_url else {},
-                ): str,
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=d, label=d) for d in dir_options
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
+                    )
+                ),
             }
         )
 
         return self.async_show_form(step_id="init", data_schema=schema)
+
+
+def _discover_offload_dirs() -> list[str]:
+    """List writable HA roots and their immediate subdirectories for the offload select.
+
+    HA Core can only write to /share, /media and /config; mounted network shares
+    (NFS/CIFS) appear as subdirectories there. Blocking I/O — call via executor.
+    """
+    import os
+
+    dirs: list[str] = []
+    for root in ("/share", "/media", "/config"):
+        if not os.path.isdir(root):
+            continue
+        dirs.append(root)
+        try:
+            for name in sorted(os.listdir(root)):
+                sub = os.path.join(root, name)
+                if os.path.isdir(sub):
+                    dirs.append(sub)
+        except OSError:
+            continue
+    # Always offer the writable roots so the dropdown is never empty.
+    for root in ("/share", "/media", "/config"):
+        if root not in dirs:
+            dirs.append(root)
+    return dirs
