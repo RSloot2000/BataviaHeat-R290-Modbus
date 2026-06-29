@@ -80,6 +80,7 @@
       "total_water_outlet_temperature": { "name": "Total water outlet temperature" },
       "buffer_inlet_temperature": { "name": "Buffer inlet temperature" },
       "buffer_outlet_temperature": { "name": "Buffer outlet temperature" },
+      "silent_mode_state": { "name": "Silent mode state" },
       "thermal_power": { "name": "Thermal power" },
       "energy_delivered": { "name": "Energy delivered" },
       "cop_current": { "name": "COP (current)" },
@@ -90,7 +91,8 @@
       "cop_alltime": { "name": "COP all time" }
     },
     "binary_sensor": {
-      "compressor_running": { "name": "Compressor running" }
+      "compressor_running": { "name": "Compressor running" },
+      "unit_power_state": { "name": "Unit power state" }
     },
     "number": {
       "max_heating_temperature": { "name": "Max heating temperature" },
@@ -112,6 +114,14 @@
           "standard": "Standard",
           "powerful": "Powerful",
           "eco": "Eco",
+          "auto": "Auto"
+        }
+      },
+      "working_mode": {
+        "name": "Working mode",
+        "state": {
+          "cool": "Cool",
+          "heat": "Heat",
           "auto": "Auto"
         }
       }

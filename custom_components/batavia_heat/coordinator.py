@@ -17,7 +17,7 @@ from datetime import timedelta
 from typing import Any
 
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient
-from pymodbus.exceptions import ModbusException
+from pymodbus.exceptions import ConnectionException, ModbusException
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -59,9 +59,11 @@ _HOLDING_READ_GROUPS: list[tuple[int, int]] = [
     (772, 1),     # HR[772]: heating target setpoint (MUST be individual read)
     (773, 1),     # HR[773]: compressor discharge temperature
     (776, 1),     # HR[776]: water outlet temperature
+    (912, 2),     # HR[912-913]: unit power + silent-mode state mirrors
     (1283, 1),    # HR[1283]: compressor running
     (1348, 3),    # HR[1348-1350]: plate HX water temps + total water outlet
     (3230, 2),    # HR[3230-3231]: buffer inlet/outlet temperatures
+    (6400, 1),    # HR[6400]: working mode (1=cool, 2=heat, 3=auto)
     (6402, 1),    # HR[6402]: max heating temperature
     (6426, 11),   # HR[6426-6436]: heating curve params
     (6465, 1),    # HR[6465]: N01 power mode
@@ -713,6 +715,25 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._reset_serial_client()
             raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
 
+    def _write_with_reconnect(self, write_fn) -> None:
+        """Run a pymodbus write, reconnecting once on a stale connection.
+
+        ESP32/serial clients keep the socket open between updates. The ESP32
+        proxy closes idle TCP connections after ~2s, so a write on a stale
+        socket fails with ConnectionException ("connection unexpectedly
+        closed"). Reads auto-recover, writes did not. Reset the client and
+        retry once so the action succeeds transparently.
+        """
+        try:
+            write_fn()
+        except (ConnectionException, ConnectionError, OSError) as err:
+            _LOGGER.debug("Write failed (%s) — reconnecting and retrying", err)
+            if self._connection_type == CONNECTION_ESP32:
+                self._reset_esp32_client()
+            else:
+                self._reset_serial_client()
+            write_fn()
+
     async def async_write_register(self, address: int, value: int) -> None:
         """Write a value to a holding register (FC06)."""
         if self._connection_type == CONNECTION_TCP:
@@ -748,7 +769,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if result.isError():
                     raise ModbusException(f"Failed to write register {address}")
 
-            await self.hass.async_add_executor_job(_write)
+            await self.hass.async_add_executor_job(
+                self._write_with_reconnect, _write,
+            )
 
         await self.async_request_refresh()
 
@@ -783,7 +806,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if result.isError():
                     raise ModbusException(f"Failed to write coil {address}")
 
-            await self.hass.async_add_executor_job(_write)
+            await self.hass.async_add_executor_job(
+                self._write_with_reconnect, _write,
+            )
 
         await self.async_request_refresh()
 

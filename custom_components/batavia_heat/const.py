@@ -69,6 +69,25 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "entity_type": "sensor",
         "icon": "mdi:heat-pump-outline",
     },
+    # ─── Status mirrors (persistent state the tablet reads back) ───
+    # HR[912] = unit power state (0=off, 1=on); HR[913] = silent-mode bitfield
+    # (0=off, 1=L1, 3=L2). Pulse-coils are write-only; these mirror the state.
+    912: {
+        "name": "unit_power_state",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "binary_sensor",
+        "icon": "mdi:power",
+    },
+    913: {
+        "name": "silent_mode_state",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "sensor",
+        "icon": "mdi:volume-off",
+    },
     772: {
         "name": "heating_target_setpoint",
         "device_class": "temperature",
@@ -146,6 +165,19 @@ HOLDING_REGISTERS: dict[int, dict] = {
     },
 
     # ─── N-serie: System Configuration ───
+    6400: {
+        "name": "working_mode",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "icon": "mdi:sun-snowflake-variant",
+        "options": {
+            1: "cool",
+            2: "heat",
+            3: "auto",
+        },
+    },
     6465: {
         "name": "power_mode",
         "device_class": None,
@@ -358,8 +390,8 @@ COILS: dict[int, dict] = {
         "off_coil": 1025,
         "entity_type": "switch",
         "icon": "mdi:power",
-        # HR[768] operational_status: >0 = unit running = ON
-        "state_register": {"type": "holding", "address": 768},
+        # HR[912] unit power mirror: 0=off, 1=on (more reliable than HR[768])
+        "state_register": {"type": "holding", "address": 912},
     },
     1073: {
         "name": "silent_mode",
@@ -367,6 +399,8 @@ COILS: dict[int, dict] = {
         "off_coil": 1074,
         "entity_type": "switch",
         "icon": "mdi:volume-off",
+        # HR[913] silent-mode bitfield: 0=off, 1=L1, 3=L2 (>0 = silent on)
+        "state_register": {"type": "holding", "address": 913},
     },
     1076: {
         "name": "silent_level_2",
