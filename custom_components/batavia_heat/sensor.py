@@ -23,7 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import CALCULATED_SENSORS, CONF_ENERGY_ENTITY, DOMAIN, INPUT_REGISTERS, HOLDING_REGISTERS
+from .const import CALCULATED_SENSORS, CLOUD_REGISTERS, CONF_ENERGY_ENTITY, DOMAIN, INPUT_REGISTERS, HOLDING_REGISTERS
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -75,6 +75,19 @@ async def async_setup_entry(
     # Calculated sensors (derived from multiple registers)
     for key, calc_info in CALCULATED_SENSORS.items():
         entities.append(BataviaHeatCalculatedSensor(coordinator, key, calc_info))
+
+    # Cloud sensors (when cloud connection is configured)
+    from .const import CONNECTION_CLOUD
+    entry = coordinator.config_entry
+    if entry.data.get("connection_type") == CONNECTION_CLOUD:
+        modbus_enabled = entry.data.get("modbus_enabled", False)
+        for addr, reg_info in CLOUD_REGISTERS.items():
+            if reg_info.get("entity_type") != "sensor":
+                continue
+            # Only show cloud-duplicate sensors when Modbus is NOT configured
+            if not reg_info.get("cloud_unique", True) and modbus_enabled:
+                continue
+            entities.append(BataviaHeatSensor(coordinator, "cloud", addr, reg_info))
 
     # Energy integration sensor (built-in Riemann sum)
     entities.append(BataviaHeatEnergySensor(
@@ -185,10 +198,15 @@ class BataviaHeatCalculatedSensor(SensorEntity):
 
         if self._key == "thermal_power":
             # thermal_power = flow_rate(L/h) × (outlet−inlet)(°C) × 4.186(J/g·°C) / 3600
-            # Result in kW
-            flow = data.get("input", {}).get(54)      # L/h
-            inlet = data.get("holding", {}).get(1348)  # °C (water inlet plate HX, T78)
-            outlet = data.get("holding", {}).get(1349) # °C (water outlet plate HX, T79)
+            # Result in kW. Modbus data preferred; cloud data used as fallback.
+            holding = data.get("holding", {})
+            inp = data.get("input", {})
+            cloud = data.get("cloud", {})
+
+            flow   = inp.get(54)       or cloud.get(2192)   # L/h
+            inlet  = holding.get(1348) or cloud.get(2187)   # °C water inlet plate HX
+            outlet = holding.get(1349) or cloud.get(2188)   # °C water outlet plate HX
+
             if flow is None or inlet is None or outlet is None:
                 return None
             if flow <= 0:

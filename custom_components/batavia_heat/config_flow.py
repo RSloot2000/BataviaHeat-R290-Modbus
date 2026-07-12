@@ -1,4 +1,4 @@
-"""Config flow for BataviaHeat R290 integration."""
+﻿"""Config flow for BataviaHeat R290 integration."""
 from __future__ import annotations
 
 import logging
@@ -20,17 +20,25 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 
+from .cloud_client import BataviaCloudGateway, CloudAuthError
 from .const import (
     CONF_BAUDRATE,
+    CONF_CLOUD_DEVICE_CODE,
+    CONF_CLOUD_DEVICE_NAME,
+    CONF_CLOUD_PASSWORD_HASH,
+    CONF_CLOUD_USERNAME,
     CONF_CONNECTION_TYPE,
     CONF_ENERGY_ENTITY,
     CONF_HOST,
+    CONF_MODBUS_CONNECTION_TYPE,
+    CONF_MODBUS_ENABLED,
     CONF_OFFLOAD_DB_MAX_MB,
     CONF_OFFLOAD_ENABLED,
     CONF_OFFLOAD_URL,
     CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
     CONF_TCP_PORT,
+    CONNECTION_CLOUD,
     CONNECTION_ESP32,
     CONNECTION_SERIAL,
     CONNECTION_TCP,
@@ -43,24 +51,20 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_CONF_PENDING_MODBUS_TYPE = "_pending_modbus_type"
+
 
 async def validate_tcp_connection(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate TCP connection to the heat pump."""
     from pymodbus.client import ModbusTcpClient
 
     def _test() -> None:
-        # NumberSelector returns float — pymodbus needs int for port and device_id
         port = int(data[CONF_TCP_PORT])
         slave = int(data[CONF_SLAVE_ID])
-        client = ModbusTcpClient(
-            host=data[CONF_HOST],
-            port=port,
-            timeout=5,
-        )
+        client = ModbusTcpClient(host=data[CONF_HOST], port=port, timeout=5)
         try:
             if not client.connect():
                 raise ConnectionError("Cannot connect to host")
-            # Read HR[22] (ambient temperature) — confirmed working register
             result = client.read_holding_registers(22, count=1, device_id=slave)
             if result.isError():
                 raise ConnectionError("No Modbus response from device")
@@ -103,32 +107,159 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
-        """Initialize the config flow."""
         self._connection_type: str = CONNECTION_TCP
         self._entry_data: dict[str, Any] = {}
         self._entry_title: str = ""
+        self._cloud_devices: list[dict[str, Any]] = []
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> BataviaHeatOptionsFlow:
-        """Get the options flow handler."""
         return BataviaHeatOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: Choose connection type."""
+        """Step 1: Choose primary connection type."""
         if user_input is not None:
-            self._connection_type = user_input[CONF_CONNECTION_TYPE]
-            if self._connection_type == CONNECTION_SERIAL:
+            chosen = user_input[CONF_CONNECTION_TYPE]
+            if chosen == CONNECTION_CLOUD:
+                self._connection_type = CONNECTION_CLOUD
+                return await self.async_step_cloud_login()
+            self._connection_type = chosen
+            if chosen == CONNECTION_SERIAL:
                 return await self.async_step_serial()
-            if self._connection_type == CONNECTION_ESP32:
+            if chosen == CONNECTION_ESP32:
                 return await self.async_step_esp32()
             return await self.async_step_tcp()
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_CONNECTION_TYPE, default=CONNECTION_TCP): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=CONNECTION_CLOUD, label="Cloud (EcoHome app account)"),
+                            SelectOptionDict(value=CONNECTION_TCP, label="DR164 gateway (Modbus TCP)"),
+                            SelectOptionDict(value=CONNECTION_ESP32, label="ESP32 proxy (Modbus TCP)"),
+                            SelectOptionDict(value=CONNECTION_SERIAL, label="Modbus RTU (Serial)"),
+                        ],
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id="user", data_schema=data_schema)
+
+    async def async_step_cloud_login(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Authenticate against the cloud and discover devices."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            username: str = user_input["username"].strip()
+            password: str = user_input["password"]
+            password_hash = BataviaCloudGateway.hash_password(password)
+
+            gateway = BataviaCloudGateway(self.hass, username, password_hash)
+            try:
+                await gateway.authenticate()
+                self._cloud_devices = await gateway.fetch_devices()
+            except CloudAuthError:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Cloud login failed")
+                errors["base"] = "cannot_connect"
+            else:
+                if not self._cloud_devices:
+                    errors["base"] = "no_devices"
+                else:
+                    self._entry_data[CONF_CLOUD_USERNAME] = username
+                    self._entry_data[CONF_CLOUD_PASSWORD_HASH] = password_hash
+                    if len(self._cloud_devices) == 1:
+                        dev = self._cloud_devices[0]
+                        self._entry_data[CONF_CLOUD_DEVICE_CODE] = dev["device_code"]
+                        self._entry_data[CONF_CLOUD_DEVICE_NAME] = (
+                            dev.get("device_nick_name") or dev.get("device_name") or dev["device_code"]
+                        )
+                        return await self.async_step_cloud_modbus()
+                    return await self.async_step_cloud_device()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required("username"): str,
+                vol.Required("password"): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="cloud_login", data_schema=data_schema, errors=errors
+        )
+
+    async def async_step_cloud_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select one device when multiple are present on the account."""
+        if user_input is not None:
+            code = user_input["device_code"]
+            name = next(
+                (
+                    d.get("device_nick_name") or d.get("device_name") or code
+                    for d in self._cloud_devices
+                    if d["device_code"] == code
+                ),
+                code,
+            )
+            self._entry_data[CONF_CLOUD_DEVICE_CODE] = code
+            self._entry_data[CONF_CLOUD_DEVICE_NAME] = name
+            return await self.async_step_cloud_modbus()
+
+        options = [
+            SelectOptionDict(
+                value=d["device_code"],
+                label=d.get("device_nick_name") or d.get("device_name") or d["device_code"],
+            )
+            for d in self._cloud_devices
+        ]
+        data_schema = vol.Schema(
+            {vol.Required("device_code"): SelectSelector(SelectSelectorConfig(options=options))}
+        )
+        return self.async_show_form(step_id="cloud_device", data_schema=data_schema)
+
+    async def async_step_cloud_modbus(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Offer to add a local Modbus connection as backup / extension."""
+        if user_input is not None:
+            if user_input.get("add_modbus", False):
+                return await self.async_step_modbus_type()
+            device_name = self._entry_data.get(CONF_CLOUD_DEVICE_NAME, "BataviaHeat")
+            self._entry_title = f"BataviaHeat ({device_name})"
+            self._entry_data[CONF_CONNECTION_TYPE] = CONNECTION_CLOUD
+            self._entry_data[CONF_MODBUS_ENABLED] = False
+            await self.async_set_unique_id(
+                f"cloud_{self._entry_data[CONF_CLOUD_DEVICE_CODE]}"
+            )
+            self._abort_if_unique_id_configured()
+            return await self.async_step_advanced()
+
+        data_schema = vol.Schema({vol.Required("add_modbus", default=False): bool})
+        return self.async_show_form(step_id="cloud_modbus", data_schema=data_schema)
+
+    async def async_step_modbus_type(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose Modbus transport when adding it as cloud backup."""
+        if user_input is not None:
+            modbus_type = user_input[CONF_MODBUS_CONNECTION_TYPE]
+            self._entry_data[_CONF_PENDING_MODBUS_TYPE] = modbus_type
+            if modbus_type == CONNECTION_SERIAL:
+                return await self.async_step_serial()
+            if modbus_type == CONNECTION_ESP32:
+                return await self.async_step_esp32()
+            return await self.async_step_tcp()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_MODBUS_CONNECTION_TYPE, default=CONNECTION_TCP): SelectSelector(
                     SelectSelectorConfig(
                         options=[
                             SelectOptionDict(value=CONNECTION_TCP, label="DR164 gateway (Modbus TCP)"),
@@ -139,37 +270,49 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
+        return self.async_show_form(step_id="modbus_type", data_schema=data_schema)
 
-        return self.async_show_form(step_id="user", data_schema=data_schema)
+    def _is_cloud_backup(self) -> bool:
+        return self._connection_type == CONNECTION_CLOUD
 
     async def async_step_tcp(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2a: Configure TCP connection."""
+        """Configure DR164 / TCP connection (primary or cloud backup)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # NumberSelector returns float — cast to int for pymodbus
             user_input[CONF_TCP_PORT] = int(user_input[CONF_TCP_PORT])
             user_input[CONF_SLAVE_ID] = int(user_input[CONF_SLAVE_ID])
-
-            await self.async_set_unique_id(
-                f"tcp_{user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]}_{user_input[CONF_SLAVE_ID]}"
-            )
-            self._abort_if_unique_id_configured()
-
             try:
                 await validate_tcp_connection(self.hass, user_input)
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
-                _LOGGER.exception("Unexpected exception during setup")
+                _LOGGER.exception("Unexpected exception during TCP setup")
                 errors["base"] = "unknown"
             else:
-                self._entry_title = (
-                    f"BataviaHeat R290 ({user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]})"
-                )
-                self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_TCP, **user_input}
+                if self._is_cloud_backup():
+                    self._entry_data.update(user_input)
+                    self._entry_data[CONF_CONNECTION_TYPE] = CONNECTION_CLOUD
+                    self._entry_data[CONF_MODBUS_ENABLED] = True
+                    self._entry_data[CONF_MODBUS_CONNECTION_TYPE] = (
+                        self._entry_data.pop(_CONF_PENDING_MODBUS_TYPE, CONNECTION_TCP)
+                    )
+                    device_name = self._entry_data.get(CONF_CLOUD_DEVICE_NAME, "BataviaHeat")
+                    self._entry_title = f"BataviaHeat ({device_name} + DR164)"
+                    await self.async_set_unique_id(
+                        f"cloud_{self._entry_data[CONF_CLOUD_DEVICE_CODE]}_tcp_{user_input[CONF_HOST]}"
+                    )
+                else:
+                    self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_TCP, **user_input}
+                    self._entry_title = (
+                        f"BataviaHeat R290 ({user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]})"
+                    )
+                    await self.async_set_unique_id(
+                        f"tcp_{user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]}_{user_input[CONF_SLAVE_ID]}"
+                    )
+                self._abort_if_unique_id_configured()
                 return await self.async_step_advanced()
 
         data_schema = vol.Schema(
@@ -183,36 +326,44 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-
-        return self.async_show_form(
-            step_id="tcp", data_schema=data_schema, errors=errors
-        )
+        return self.async_show_form(step_id="tcp", data_schema=data_schema, errors=errors)
 
     async def async_step_esp32(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2c: Configure ESP32 proxy (Modbus TCP). IP is user-supplied."""
+        """Configure ESP32 proxy / TCP connection (primary or cloud backup)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             user_input[CONF_TCP_PORT] = int(user_input[CONF_TCP_PORT])
             user_input[CONF_SLAVE_ID] = int(user_input[CONF_SLAVE_ID])
-
-            await self.async_set_unique_id(
-                f"esp32_{user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]}_{user_input[CONF_SLAVE_ID]}"
-            )
-            self._abort_if_unique_id_configured()
-
             try:
                 await validate_tcp_connection(self.hass, user_input)
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
-                _LOGGER.exception("Unexpected exception during setup")
+                _LOGGER.exception("Unexpected exception during ESP32 setup")
                 errors["base"] = "unknown"
             else:
-                self._entry_title = f"BataviaHeat R290 ESP32 ({user_input[CONF_HOST]})"
-                self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_ESP32, **user_input}
+                if self._is_cloud_backup():
+                    self._entry_data.update(user_input)
+                    self._entry_data[CONF_CONNECTION_TYPE] = CONNECTION_CLOUD
+                    self._entry_data[CONF_MODBUS_ENABLED] = True
+                    self._entry_data[CONF_MODBUS_CONNECTION_TYPE] = (
+                        self._entry_data.pop(_CONF_PENDING_MODBUS_TYPE, CONNECTION_ESP32)
+                    )
+                    device_name = self._entry_data.get(CONF_CLOUD_DEVICE_NAME, "BataviaHeat")
+                    self._entry_title = f"BataviaHeat ({device_name} + ESP32)"
+                    await self.async_set_unique_id(
+                        f"cloud_{self._entry_data[CONF_CLOUD_DEVICE_CODE]}_esp32_{user_input[CONF_HOST]}"
+                    )
+                else:
+                    self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_ESP32, **user_input}
+                    self._entry_title = f"BataviaHeat R290 ESP32 ({user_input[CONF_HOST]})"
+                    await self.async_set_unique_id(
+                        f"esp32_{user_input[CONF_HOST]}:{user_input[CONF_TCP_PORT]}_{user_input[CONF_SLAVE_ID]}"
+                    )
+                self._abort_if_unique_id_configured()
                 return await self.async_step_advanced()
 
         data_schema = vol.Schema(
@@ -226,36 +377,45 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-
-        return self.async_show_form(
-            step_id="esp32", data_schema=data_schema, errors=errors
-        )
+        return self.async_show_form(step_id="esp32", data_schema=data_schema, errors=errors)
 
     async def async_step_serial(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2b: Configure serial (RTU) connection."""
+        """Configure serial RTU connection (primary or cloud backup)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             user_input.setdefault(CONF_BAUDRATE, DEFAULT_BAUDRATE)
             user_input[CONF_SLAVE_ID] = int(user_input[CONF_SLAVE_ID])
             user_input[CONF_BAUDRATE] = int(user_input[CONF_BAUDRATE])
-            await self.async_set_unique_id(
-                f"serial_{user_input[CONF_SERIAL_PORT]}_{user_input[CONF_SLAVE_ID]}"
-            )
-            self._abort_if_unique_id_configured()
-
             try:
                 await validate_serial_connection(self.hass, user_input)
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
-                _LOGGER.exception("Unexpected exception during setup")
+                _LOGGER.exception("Unexpected exception during serial setup")
                 errors["base"] = "unknown"
             else:
-                self._entry_title = f"BataviaHeat R290 ({user_input[CONF_SERIAL_PORT]})"
-                self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_SERIAL, **user_input}
+                if self._is_cloud_backup():
+                    self._entry_data.update(user_input)
+                    self._entry_data[CONF_CONNECTION_TYPE] = CONNECTION_CLOUD
+                    self._entry_data[CONF_MODBUS_ENABLED] = True
+                    self._entry_data[CONF_MODBUS_CONNECTION_TYPE] = (
+                        self._entry_data.pop(_CONF_PENDING_MODBUS_TYPE, CONNECTION_SERIAL)
+                    )
+                    device_name = self._entry_data.get(CONF_CLOUD_DEVICE_NAME, "BataviaHeat")
+                    self._entry_title = f"BataviaHeat ({device_name} + Serial)"
+                    await self.async_set_unique_id(
+                        f"cloud_{self._entry_data[CONF_CLOUD_DEVICE_CODE]}_serial_{user_input[CONF_SERIAL_PORT]}"
+                    )
+                else:
+                    self._entry_data = {CONF_CONNECTION_TYPE: CONNECTION_SERIAL, **user_input}
+                    self._entry_title = f"BataviaHeat R290 ({user_input[CONF_SERIAL_PORT]})"
+                    await self.async_set_unique_id(
+                        f"serial_{user_input[CONF_SERIAL_PORT]}_{user_input[CONF_SLAVE_ID]}"
+                    )
+                self._abort_if_unique_id_configured()
                 return await self.async_step_advanced()
 
         data_schema = vol.Schema(
@@ -269,19 +429,12 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-
-        return self.async_show_form(
-            step_id="serial", data_schema=data_schema, errors=errors
-        )
+        return self.async_show_form(step_id="serial", data_schema=data_schema, errors=errors)
 
     async def async_step_advanced(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Final step: optional advanced options (energy meter, register offload).
-
-        Opens automatically after the connection is validated. Every field is
-        optional — leave them all empty to skip the advanced features.
-        """
+        """Optional energy meter + register offload settings."""
         if user_input is not None:
             return self.async_create_entry(
                 title=self._entry_title,
@@ -304,17 +457,13 @@ class BataviaHeatOptionsFlow(OptionsFlow):
     """Handle options flow for BataviaHeat R290."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
         self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(
-                data=_normalize_advanced_options(user_input)
-            )
+            return self.async_create_entry(data=_normalize_advanced_options(user_input))
 
         dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
         schema = _build_advanced_schema(
@@ -336,12 +485,6 @@ def _build_advanced_schema(
     offload_db_max_mb: float,
     dir_options: list[str],
 ) -> vol.Schema:
-    """Build the shared advanced-options schema (energy meter + register offload).
-
-    Used by both the initial config flow's advanced step and the options flow.
-    All fields are optional so the user can leave everything empty.
-    """
-    # Keep the currently configured value selectable even if it isn't a folder.
     if offload_url and offload_url not in dir_options:
         dir_options.append(offload_url)
     return vol.Schema(
@@ -349,12 +492,8 @@ def _build_advanced_schema(
             vol.Optional(
                 CONF_ENERGY_ENTITY,
                 description={"suggested_value": energy_entity} if energy_entity else {},
-            ): EntitySelector(
-                EntitySelectorConfig(domain="sensor", device_class="energy")
-            ),
-            vol.Optional(
-                CONF_OFFLOAD_ENABLED, default=offload_enabled,
-            ): bool,
+            ): EntitySelector(EntitySelectorConfig(domain="sensor", device_class="energy")),
+            vol.Optional(CONF_OFFLOAD_ENABLED, default=offload_enabled): bool,
             vol.Optional(
                 CONF_OFFLOAD_URL,
                 description={"suggested_value": offload_url} if offload_url else {},
@@ -365,13 +504,9 @@ def _build_advanced_schema(
                     custom_value=True,
                 )
             ),
-            vol.Optional(
-                CONF_OFFLOAD_DB_MAX_MB, default=offload_db_max_mb,
-            ): NumberSelector(
+            vol.Optional(CONF_OFFLOAD_DB_MAX_MB, default=offload_db_max_mb): NumberSelector(
                 NumberSelectorConfig(
-                    min=0,
-                    max=1024000,
-                    step=1,
+                    min=0, max=1024000, step=1,
                     mode=NumberSelectorMode.BOX,
                     unit_of_measurement="MB",
                 )
@@ -381,7 +516,6 @@ def _build_advanced_schema(
 
 
 def _normalize_advanced_options(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Fill in defaults for any advanced fields the user left empty."""
     options = dict(user_input)
     options.setdefault(CONF_ENERGY_ENTITY, "")
     options.setdefault(CONF_OFFLOAD_URL, "")
@@ -391,27 +525,18 @@ def _normalize_advanced_options(user_input: dict[str, Any]) -> dict[str, Any]:
 
 
 def _discover_offload_dirs() -> list[str]:
-    """List writable HA roots and their immediate subdirectories for the offload select.
-
-    HA Core can only write to /share, /media and /config; mounted network shares
-    (NFS/CIFS) appear as subdirectories there. Blocking I/O — call via executor.
-    """
     import os
+    from pathlib import Path
 
+    roots = [Path("/share"), Path("/media"), Path("/config")]
     dirs: list[str] = []
-    for root in ("/share", "/media", "/config"):
-        if not os.path.isdir(root):
-            continue
-        dirs.append(root)
-        try:
-            for name in sorted(os.listdir(root)):
-                sub = os.path.join(root, name)
-                if os.path.isdir(sub):
-                    dirs.append(sub)
-        except OSError:
-            continue
-    # Always offer the writable roots so the dropdown is never empty.
-    for root in ("/share", "/media", "/config"):
-        if root not in dirs:
-            dirs.append(root)
+    for root in roots:
+        if root.is_dir():
+            dirs.append(str(root))
+            try:
+                for child in sorted(root.iterdir()):
+                    if child.is_dir() and os.access(child, os.W_OK):
+                        dirs.append(str(child))
+            except PermissionError:
+                pass
     return dirs

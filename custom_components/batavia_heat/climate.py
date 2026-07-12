@@ -90,17 +90,32 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the current water outlet temperature (HR[776])."""
+        """Return the current water outlet temperature.
+
+        Reads HR[1350] from Modbus first; falls back to cloud address 2189
+        (total water outlet) or 2106 (HP water outlet) when Modbus is absent.
+        """
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get("holding", {}).get(REG_CURRENT_TEMP)
+        val = self.coordinator.data.get("holding", {}).get(REG_CURRENT_TEMP)
+        if val is None:
+            cloud = self.coordinator.data.get("cloud", {})
+            val = cloud.get(2189) or cloud.get(2106)
+        return val
 
     @property
     def target_temperature(self) -> float | None:
-        """Return the heating setpoint (HR[6402] = M02 parameter)."""
+        """Return the heating setpoint.
+
+        Reads HR[772] from Modbus first; falls back to cloud address 1023
+        (heating setpoint) when Modbus is absent.
+        """
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get("holding", {}).get(REG_TARGET_TEMP)
+        val = self.coordinator.data.get("holding", {}).get(REG_TARGET_TEMP)
+        if val is None:
+            val = self.coordinator.data.get("cloud", {}).get(1023)
+        return val
 
     @property
     def _is_unit_on(self) -> bool:

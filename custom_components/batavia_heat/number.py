@@ -9,7 +9,7 @@ from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, HOLDING_REGISTERS
+from .const import CLOUD_REGISTERS, DOMAIN, HOLDING_REGISTERS
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -32,6 +32,18 @@ async def async_setup_entry(
     for addr, reg_info in HOLDING_REGISTERS.items():
         if reg_info.get("entity_type") == "number":
             entities.append(BataviaHeatNumber(coordinator, "holding", addr, reg_info))
+
+    # Cloud number entities (setpoints writable via cloud API)
+    from .const import CONNECTION_CLOUD
+    entry = coordinator.config_entry
+    if entry.data.get("connection_type") == CONNECTION_CLOUD:
+        modbus_enabled = entry.data.get("modbus_enabled", False)
+        for addr, reg_info in CLOUD_REGISTERS.items():
+            if reg_info.get("entity_type") != "number":
+                continue
+            if not reg_info.get("cloud_unique", True) and modbus_enabled:
+                continue
+            entities.append(BataviaHeatNumber(coordinator, "cloud", addr, reg_info))
 
     async_add_entities(entities)
 
@@ -65,9 +77,12 @@ class BataviaHeatNumber(BataviaHeatEntity, NumberEntity):
         """Return the current value."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get("holding", {}).get(self._address)
+        return self.coordinator.data.get(self._reg_type, {}).get(self._address)
 
     async def async_set_native_value(self, value: float) -> None:
         """Set a new value."""
-        raw_value = int(value / self._scale)
-        await self.coordinator.async_write_register(self._address, raw_value)
+        raw_value = int(value / self._scale) if self._scale != 1 else int(value)
+        if self._reg_type == "cloud":
+            await self.coordinator.async_cloud_set_value(self._address, raw_value)
+        else:
+            await self.coordinator.async_write_register(self._address, raw_value)

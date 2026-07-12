@@ -3,9 +3,38 @@
     "step": {
       "user": {
         "title": "BataviaHeat R290 Connection",
-        "description": "Select how your heat pump is connected.",
+        "description": "Choose how to connect to your heat pump. Select Cloud to use your EcoHome app account, or a Modbus option for a direct local connection.",
         "data": {
           "connection_type": "Connection type"
+        }
+      },
+      "cloud_login": {
+        "title": "EcoHome Cloud Login",
+        "description": "Enter the username and password you use for the EcoHome app. Your password is stored as an MD5 hash — never in plaintext.",
+        "data": {
+          "username": "Email address / username",
+          "password": "Password"
+        }
+      },
+      "cloud_device": {
+        "title": "Select Device",
+        "description": "Multiple heat pumps were found on your account. Select the one to control.",
+        "data": {
+          "device_code": "Device"
+        }
+      },
+      "cloud_modbus": {
+        "title": "Add Modbus as Backup / Extension?",
+        "description": "Cloud is the primary connection (30 s polling). Optionally add a local Modbus connection for faster updates and additional registers. When the cloud is unreachable the integration falls back to Modbus automatically.",
+        "data": {
+          "add_modbus": "Add Modbus backup / extension"
+        }
+      },
+      "modbus_type": {
+        "title": "Modbus Connection Type",
+        "description": "Choose how the local Modbus connection is made.",
+        "data": {
+          "modbus_connection_type": "Modbus connection type"
         }
       },
       "tcp": {
@@ -47,7 +76,9 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the heat pump. Check your connection settings.",
+      "cannot_connect": "Failed to connect. Check your connection settings.",
+      "invalid_auth": "Invalid credentials. Check your username and password.",
+      "no_devices": "No devices found on this account.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
@@ -99,7 +130,27 @@
       "cop_week": { "name": "COP this week" },
       "cop_month": { "name": "COP this month" },
       "cop_year": { "name": "COP this year" },
-      "cop_alltime": { "name": "COP all time" }
+      "cop_alltime": { "name": "COP all time" },
+      "room_temperature": { "name": "Room temperature" },
+      "compressor_speed": { "name": "Compressor speed" },
+      "hot_water_tank_temperature": { "name": "Hot water tank temperature" },
+      "buffer_top_temperature": { "name": "Buffer top temperature" },
+      "buffer_bottom_temperature": { "name": "Buffer bottom temperature" },
+      "cloud_outdoor_temperature": { "name": "Outdoor temperature (cloud)" },
+      "cloud_system_water_outlet_temperature": { "name": "System water outlet temperature (cloud)" },
+      "cloud_hp_water_outlet_temperature": { "name": "HP water outlet temperature (cloud)" },
+      "cloud_fin_coil_temperature": { "name": "Fin coil temperature (cloud)" },
+      "cloud_discharge_temperature": { "name": "Discharge temperature (cloud)" },
+      "cloud_suction_temperature": { "name": "Suction temperature (cloud)" },
+      "cloud_low_pressure": { "name": "Low pressure (cloud)" },
+      "cloud_high_pressure": { "name": "High pressure (cloud)" },
+      "cloud_plate_hx_water_inlet_temperature": { "name": "Plate HX inlet temperature (cloud)" },
+      "cloud_plate_hx_water_outlet_temperature": { "name": "Plate HX outlet temperature (cloud)" },
+      "cloud_total_water_outlet_temperature": { "name": "Total water outlet temperature (cloud)" },
+      "cloud_pump_target_speed": { "name": "Pump target speed (cloud)" },
+      "cloud_pump_flow_rate": { "name": "Pump flow rate (cloud)" },
+      "cloud_pump_control_signal": { "name": "Pump control signal (cloud)" },
+      "cloud_pump_feedback_signal": { "name": "Pump feedback signal (cloud)" }
     },
     "binary_sensor": {
       "compressor_running": { "name": "Compressor running" },
@@ -132,7 +183,11 @@
       "pump_target_flow_setpoint": { "name": "Pump target flow setpoint" },
       "lower_return_pump_interval": { "name": "Lower return pump interval" },
       "pump_intermittent_stop_time": { "name": "Pump intermittent stop time" },
-      "pump_intermittent_run_time": { "name": "Pump intermittent run time" }
+      "pump_intermittent_run_time": { "name": "Pump intermittent run time" },
+      "hot_water_setpoint": { "name": "Hot water setpoint" },
+      "cloud_cooling_setpoint": { "name": "Cooling setpoint (cloud)" },
+      "cloud_heating_setpoint": { "name": "Heating setpoint (cloud)" },
+      "cloud_heating_setpoint_zone_b": { "name": "Heating setpoint zone B (cloud)" }
     },
     "switch": {
       "unit_power": { "name": "Unit power" },
@@ -204,6 +259,22 @@
         "state": {
           "off": "Off",
           "on": "On"
+        }
+      },
+      "cloud_silent_mode": {
+        "name": "Silent mode (cloud)",
+        "state": {
+          "off": "Off",
+          "on": "On"
+        }
+      },
+      "cloud_power_mode": {
+        "name": "Power mode (cloud)",
+        "state": {
+          "standard": "Standard",
+          "powerful": "Powerful",
+          "eco": "Eco",
+          "auto": "Auto"
         }
       }
     },

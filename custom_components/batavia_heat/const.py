@@ -20,6 +20,22 @@ CONF_ENERGY_ENTITY = "energy_entity"
 CONNECTION_TCP = "tcp"          # DR164 RS485-WiFi gateway (tablet bus-sharing)
 CONNECTION_SERIAL = "serial"    # Direct USB/RS485 dongle
 CONNECTION_ESP32 = "esp32"      # ESP32-S3 Modbus-TCP proxy (own bus, no tablet)
+CONNECTION_CLOUD = "cloud"      # EcoHome cloud API (primary), optional Modbus backup
+
+# === Cloud connection config keys ===
+CONF_CLOUD_USERNAME = "cloud_username"
+CONF_CLOUD_PASSWORD_HASH = "cloud_password_hash"   # MD5 hex digest (never plaintext)
+CONF_CLOUD_DEVICE_CODE = "cloud_device_code"
+CONF_CLOUD_DEVICE_NAME = "cloud_device_name"
+# Set to True when Modbus is added as a backup/extension alongside cloud.
+CONF_MODBUS_ENABLED = "modbus_enabled"
+# Modbus connection type when used as cloud backup (tcp / serial / esp32).
+CONF_MODBUS_CONNECTION_TYPE = "modbus_connection_type"
+
+# Polling interval for the cloud path (seconds).
+DEFAULT_CLOUD_SCAN_INTERVAL = 30
+# Consecutive cloud failures before falling back to Modbus-only.
+CLOUD_FAILURE_THRESHOLD = 3
 
 # === Optional register offload (push raw registers to NAS for later decode) ===
 CONF_OFFLOAD_ENABLED = "offload_enabled"
@@ -717,4 +733,248 @@ DISCRETE_INPUTS: dict[int, dict] = {}
 
 # Error code mapping (not yet identified)
 ERROR_CODES: dict[int, str] = {}
+
+# ── Cloud registers ─────────────────────────────────────────────────────────
+# Keyed by cloud-API address (int).  These are a completely different numbering
+# scheme from the raw Modbus addresses above (1000-4xxx vs. 22-7239).
+# Values returned by paramListV3 are already human-readable floats — scale=1.
+#
+# "cloud_unique": True  → always shown when cloud is configured (no Modbus
+#                          equivalent, or cloud provides distinct data).
+# "cloud_unique": False → only shown when Modbus is NOT configured; when
+#                          Modbus is enabled the local register is preferred.
+CLOUD_REGISTERS: dict[int, dict] = {
+    # ── Read-only sensors ──────────────────────────────────────────────────────
+    2097: {
+        "name": "room_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:home-thermometer",
+    },
+    2072: {
+        "name": "compressor_speed",
+        "device_class": None,
+        "unit": "rpm",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:fan",
+    },
+    2100: {
+        "name": "hot_water_tank_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:water-boiler",
+    },
+    2104: {
+        "name": "buffer_top_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:storage-tank",
+    },
+    2105: {
+        "name": "buffer_bottom_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:storage-tank",
+    },
+    2099: {
+        "name": "cloud_outdoor_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2102: {
+        "name": "cloud_system_water_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2106: {
+        "name": "cloud_hp_water_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2142: {
+        "name": "cloud_fin_coil_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2143: {
+        "name": "cloud_discharge_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2144: {
+        "name": "cloud_suction_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2149: {
+        "name": "cloud_low_pressure",
+        "device_class": "pressure",
+        "unit": "bar",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2150: {
+        "name": "cloud_high_pressure",
+        "device_class": "pressure",
+        "unit": "bar",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2187: {
+        "name": "cloud_plate_hx_water_inlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2188: {
+        "name": "cloud_plate_hx_water_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2189: {
+        "name": "cloud_total_water_outlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+    },
+    2191: {
+        "name": "cloud_pump_target_speed",
+        "device_class": None,
+        "unit": "rpm",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+        "icon": "mdi:pump",
+    },
+    2192: {
+        "name": "cloud_pump_flow_rate",
+        "device_class": None,
+        "unit": "L/h",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+        "icon": "mdi:water-pump",
+    },
+    2193: {
+        "name": "cloud_pump_control_signal",
+        "device_class": None,
+        "unit": "%",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+        "icon": "mdi:pump",
+    },
+    2194: {
+        "name": "cloud_pump_feedback_signal",
+        "device_class": None,
+        "unit": "%",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": False,
+        "icon": "mdi:pump",
+    },
+    # ── Writable settings (always shown when cloud is configured) ─────────────
+    1024: {
+        "name": "hot_water_setpoint",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "min": 18,
+        "max": 75,
+        "entity_type": "number",
+        "cloud_unique": True,
+        "icon": "mdi:water-boiler",
+    },
+    1022: {
+        "name": "cloud_cooling_setpoint",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "min": 10,
+        "max": 35,
+        "entity_type": "number",
+        "cloud_unique": False,
+    },
+    1023: {
+        "name": "cloud_heating_setpoint",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "min": 20,
+        "max": 80,
+        "entity_type": "number",
+        "cloud_unique": False,
+    },
+    1029: {
+        "name": "cloud_heating_setpoint_zone_b",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "min": 20,
+        "max": 70,
+        "entity_type": "number",
+        "cloud_unique": False,
+    },
+    1004: {
+        "name": "cloud_silent_mode",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": False,
+        "options": {0: "off", 1: "on"},
+        "icon": "mdi:volume-off",
+    },
+    1031: {
+        "name": "cloud_power_mode",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": False,
+        "options": {0: "standard", 1: "powerful", 2: "eco", 3: "auto"},
+        "icon": "mdi:lightning-bolt",
+    },
+}
 

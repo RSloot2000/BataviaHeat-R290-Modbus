@@ -25,20 +25,29 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from .cloud_client import BataviaCloudGateway, CloudAuthError, CloudSessionError
 from .const import (
+    CLOUD_FAILURE_THRESHOLD,
     CONF_BAUDRATE,
+    CONF_CLOUD_DEVICE_CODE,
+    CONF_CLOUD_PASSWORD_HASH,
+    CONF_CLOUD_USERNAME,
     CONF_CONNECTION_TYPE,
     CONF_HOST,
+    CONF_MODBUS_CONNECTION_TYPE,
+    CONF_MODBUS_ENABLED,
     CONF_OFFLOAD_DB_MAX_MB,
     CONF_OFFLOAD_ENABLED,
     CONF_OFFLOAD_URL,
     CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
     CONF_TCP_PORT,
+    CONNECTION_CLOUD,
     CONNECTION_ESP32,
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
+    DEFAULT_CLOUD_SCAN_INTERVAL,
     DEFAULT_OFFLOAD_DB_MAX_MB,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -133,23 +142,57 @@ CREATE INDEX IF NOT EXISTS idx_readings_addr ON readings(reg_type, address);
 
 
 class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator to manage fetching data from BataviaHeat R290 via Modbus."""
+    """Coordinator to manage fetching data from BataviaHeat R290.
+
+    Supports three operating modes:
+    - Modbus-only (tcp / esp32 / serial): existing behaviour, unchanged.
+    - Cloud-only: polls the EcoHome cloud API every 30 s.
+    - Cloud + Modbus: cloud is primary (30 s), Modbus runs as backup/extension.
+      When the cloud is unreachable for CLOUD_FAILURE_THRESHOLD consecutive
+      cycles the coordinator falls back to Modbus-only until the cloud recovers.
+    """
 
     config_entry: ConfigEntry
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
+        self._connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TCP)
+        scan_secs = (
+            DEFAULT_CLOUD_SCAN_INTERVAL
+            if self._connection_type == CONNECTION_CLOUD
+            else DEFAULT_SCAN_INTERVAL
+        )
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(seconds=scan_secs),
         )
         self.config_entry = entry
-        self._connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TCP)
-        self._slave_id = entry.data[CONF_SLAVE_ID]
+        self._slave_id = entry.data.get(CONF_SLAVE_ID, 1)
 
-        # TCP raw socket state (tablet-synchronized)
+        # ── Cloud state ────────────────────────────────────────────────────────
+        self._cloud: BataviaCloudGateway | None = None
+        self._cloud_device_code: str = ""
+        self._cloud_active: bool = False
+        self._cloud_failures: int = 0
+        self._modbus_enabled: bool = False
+        self._modbus_connection_type: str = CONNECTION_TCP
+
+        if self._connection_type == CONNECTION_CLOUD:
+            self._cloud = BataviaCloudGateway(
+                hass,
+                entry.data[CONF_CLOUD_USERNAME],
+                entry.data[CONF_CLOUD_PASSWORD_HASH],
+            )
+            self._cloud_device_code = entry.data[CONF_CLOUD_DEVICE_CODE]
+            self._cloud_active = True
+            self._modbus_enabled = entry.data.get(CONF_MODBUS_ENABLED, False)
+            self._modbus_connection_type = entry.data.get(
+                CONF_MODBUS_CONNECTION_TYPE, CONNECTION_TCP
+            )
+
+        # ── TCP raw socket state (tablet-synchronized) ─────────────────────────
         self._tcp_reader: asyncio.StreamReader | None = None
         self._tcp_writer: asyncio.StreamWriter | None = None
         self._tcp_buf: bytes = b""
@@ -176,12 +219,19 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ESP32 pymodbus TCP client (proxy has its own bus, no tablet sharing)
         self._esp32_client: ModbusTcpClient | None = None
 
-        if self._connection_type == CONNECTION_SERIAL:
-            self._serial_port = entry.data[CONF_SERIAL_PORT]
+        # Determine which host/port/serial to use for Modbus.
+        # For cloud-primary + Modbus-backup the same entry keys are used.
+        modbus_type = (
+            self._modbus_connection_type
+            if self._connection_type == CONNECTION_CLOUD
+            else self._connection_type
+        )
+        if modbus_type == CONNECTION_SERIAL:
+            self._serial_port = entry.data.get(CONF_SERIAL_PORT, "")
             self._baudrate = entry.data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE)
-        else:
-            self._host = entry.data[CONF_HOST]
-            self._tcp_port = entry.data[CONF_TCP_PORT]
+        elif modbus_type in (CONNECTION_TCP, CONNECTION_ESP32):
+            self._host = entry.data.get(CONF_HOST, "")
+            self._tcp_port = entry.data.get(CONF_TCP_PORT, 502)
 
     # ── Shared register processing ──
 
@@ -885,7 +935,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return (merged, readings, pruned)
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from the heat pump."""
+        """Fetch data from the heat pump (cloud, Modbus, or both)."""
+        if self._connection_type == CONNECTION_CLOUD:
+            return await self._async_update_cloud()
+
+        # ── Modbus-only path (unchanged) ──────────────────────────────────────
         try:
             if self._connection_type == CONNECTION_TCP:
                 data = await self._async_read_all_registers_tcp()
@@ -900,29 +954,119 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_offload(data)
             return data
         except ConnectionError as err:
-            if self._connection_type == CONNECTION_TCP:
-                await self._async_disconnect_tcp()
-            elif self._connection_type == CONNECTION_ESP32:
-                self._reset_esp32_client()
-            else:
-                self._reset_serial_client()
+            self._reset_modbus_client()
             raise UpdateFailed(f"Connection error: {err}") from err
         except Exception as err:
-            if self._connection_type == CONNECTION_TCP:
-                await self._async_disconnect_tcp()
-            elif self._connection_type == CONNECTION_ESP32:
-                self._reset_esp32_client()
-            else:
-                self._reset_serial_client()
+            self._reset_modbus_client()
             raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
-        except Exception as err:
-            if self._connection_type == CONNECTION_TCP:
-                await self._async_disconnect_tcp()
-            elif self._connection_type == CONNECTION_ESP32:
-                self._reset_esp32_client()
-            else:
-                self._reset_serial_client()
-            raise UpdateFailed(f"Error communicating with heat pump: {err}") from err
+
+    async def _async_update_cloud(self) -> dict[str, Any]:
+        """Poll the cloud API and optionally the Modbus backup."""
+        data: dict[str, Any] = {
+            "holding": {}, "input": {}, "coil": {}, "discrete": {}, "cloud": {},
+        }
+
+        # ── Cloud read ────────────────────────────────────────────────────────
+        assert self._cloud is not None
+        if self._cloud_active:
+            try:
+                if not await self._cloud.is_session_valid():
+                    await self._cloud.authenticate()
+                cloud_values = await self._cloud.fetch_all_params(self._cloud_device_code)
+                data["cloud"] = cloud_values
+                self._cloud_failures = 0
+            except (CloudAuthError, CloudSessionError):
+                # Try a single re-authentication before giving up.
+                try:
+                    await self._cloud.authenticate()
+                    cloud_values = await self._cloud.fetch_all_params(self._cloud_device_code)
+                    data["cloud"] = cloud_values
+                    self._cloud_failures = 0
+                except Exception as err:  # noqa: BLE001
+                    self._cloud_failures += 1
+                    _LOGGER.warning(
+                        "Cloud re-auth failed (%d/%d): %s",
+                        self._cloud_failures, CLOUD_FAILURE_THRESHOLD, err,
+                    )
+            except Exception as err:  # noqa: BLE001
+                self._cloud_failures += 1
+                _LOGGER.warning(
+                    "Cloud poll failed (%d/%d): %s",
+                    self._cloud_failures, CLOUD_FAILURE_THRESHOLD, err,
+                )
+
+            if self._cloud_failures >= CLOUD_FAILURE_THRESHOLD:
+                self._cloud_active = False
+                _LOGGER.warning(
+                    "Cloud unreachable after %d attempts — falling back to Modbus",
+                    CLOUD_FAILURE_THRESHOLD,
+                )
+        else:
+            # Attempt to restore the cloud connection in the background.
+            try:
+                await self._cloud.authenticate()
+                self._cloud_active = True
+                self._cloud_failures = 0
+                _LOGGER.info("Cloud connection restored")
+            except Exception:  # noqa: BLE001
+                pass  # Will retry next cycle
+
+        # ── Modbus backup read ────────────────────────────────────────────────
+        if self._modbus_enabled:
+            try:
+                mtype = self._modbus_connection_type
+                if mtype == CONNECTION_TCP:
+                    modbus_data = await self._async_read_all_registers_tcp()
+                elif mtype == CONNECTION_ESP32:
+                    modbus_data = await self.hass.async_add_executor_job(
+                        self._read_all_registers_esp32,
+                    )
+                else:
+                    modbus_data = await self.hass.async_add_executor_job(
+                        self._read_all_registers_serial,
+                    )
+                data["holding"].update(modbus_data["holding"])
+                data["input"].update(modbus_data["input"])
+                data["coil"].update(modbus_data.get("coil", {}))
+            except Exception as err:  # noqa: BLE001
+                if not self._cloud_active and not data["cloud"]:
+                    raise UpdateFailed(
+                        f"Both cloud and Modbus unavailable: {err}"
+                    ) from err
+                _LOGGER.debug("Modbus backup read failed (cloud still active): %s", err)
+                self._reset_modbus_client()
+        elif not data["cloud"] and not self._cloud_active:
+            raise UpdateFailed("Cloud unavailable and no Modbus backup configured")
+
+        await self._async_offload(data)
+        return data
+
+    def _reset_modbus_client(self) -> None:
+        """Disconnect whichever Modbus client is active."""
+        conn = (
+            self._modbus_connection_type
+            if self._connection_type == CONNECTION_CLOUD
+            else self._connection_type
+        )
+        if conn == CONNECTION_TCP:
+            self.hass.loop.create_task(self._async_disconnect_tcp())
+        elif conn == CONNECTION_ESP32:
+            self._reset_esp32_client()
+        else:
+            self._reset_serial_client()
+
+    async def async_cloud_set_value(self, address: int, value: int) -> None:
+        """Write a parameter via the cloud API and trigger a data refresh."""
+        if self._cloud is None or not self._cloud_active:
+            raise RuntimeError("Cloud connection is not available")
+        try:
+            if not await self._cloud.is_session_valid():
+                await self._cloud.authenticate()
+            await self._cloud.set_param(self._cloud_device_code, address, value)
+        except (CloudAuthError, CloudSessionError):
+            await self._cloud.authenticate()
+            await self._cloud.set_param(self._cloud_device_code, address, value)
+        await self.async_request_refresh()
 
     def _write_with_reconnect(self, write_fn) -> None:
         """Run a pymodbus write, reconnecting once on a stale connection.
@@ -944,8 +1088,17 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             write_fn()
 
     async def async_write_register(self, address: int, value: int) -> None:
-        """Write a value to a holding register (FC06)."""
-        if self._connection_type == CONNECTION_TCP:
+        """Write a value to a holding register (FC06).
+
+        When cloud is primary the effective Modbus type comes from
+        _modbus_connection_type (set when Modbus backup is configured).
+        """
+        effective = (
+            self._modbus_connection_type
+            if self._connection_type == CONNECTION_CLOUD
+            else self._connection_type
+        )
+        if effective == CONNECTION_TCP:
             await self._async_connect_tcp()
             last_err: str = "unknown"
             for attempt in range(1, _MAX_READ_RETRIES + 1):
@@ -969,7 +1122,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             def _write() -> None:
                 client = (
                     self._get_esp32_client()
-                    if self._connection_type == CONNECTION_ESP32
+                    if effective == CONNECTION_ESP32
                     else self._get_serial_client()
                 )
                 result = client.write_register(
@@ -1022,10 +1175,16 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.async_request_refresh()
 
     async def async_close(self) -> None:
-        """Close the Modbus connection (called on integration unload)."""
-        if self._connection_type == CONNECTION_TCP:
+        """Close all connections (called on integration unload)."""
+        # Determine which Modbus transport is active (primary or backup)
+        active_modbus = (
+            self._modbus_connection_type
+            if self._connection_type == CONNECTION_CLOUD
+            else self._connection_type
+        )
+        if active_modbus == CONNECTION_TCP:
             await self._async_disconnect_tcp()
-        elif self._connection_type == CONNECTION_ESP32:
+        elif active_modbus == CONNECTION_ESP32:
             if self._esp32_client:
                 await self.hass.async_add_executor_job(self._esp32_client.close)
                 self._esp32_client = None
