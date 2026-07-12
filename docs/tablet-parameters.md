@@ -598,7 +598,7 @@ Mogelijke toekomstige locatie: bereik HR[300-699] of HR[1400-6399] (nog niet ges
 
 ## HACS Integratie architectuur
 
-> **Repository:** [`RSloot2000/BataviaHeat-R290-Modbus`](https://github.com/RSloot2000/BataviaHeat-R290-Modbus)
+> **Repository:** [`RSloot2000/BataviaHeat-Heat-Pump`](https://github.com/RSloot2000/BataviaHeat-Heat-Pump)
 > **Domain:** `batavia_heat` | **pymodbus:** ≥3.6.0
 
 ### Platforms

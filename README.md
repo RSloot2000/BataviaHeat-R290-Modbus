@@ -1,8 +1,13 @@
 # BataviaHeat R290 - Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-
-> **🚧 This project is in early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
+[![Validate](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/main.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/main.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
+[![GitHub Release Date](https://img.shields.io/github/release-date/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
+![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-blue?logo=home-assistant)
+[![License](https://img.shields.io/github/license/RSloot2000/BataviaHeat-Heat-Pump)](LICENSE)
+[![GitHub issues](https://img.shields.io/github/issues/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues)
+![Maintenance](https://img.shields.io/maintenance/yes/2026)
 
 Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump. Supports four connection types:
 
@@ -20,7 +25,7 @@ The BataviaHeat R290 is manufactured by **Newntide** and sold under various bran
 - BataviaHeat R290 3–8 kW (confirmed)
 - Other Newntide OEM/white-label rebrands with identical controller hardware
 
-If you have a Newntide-based heat pump from a different brand and can confirm compatibility, please [open an issue](https://github.com/RSloot2000/BataviaHeat-R290-Modbus/issues) so we can add it to the list. Or if you have the means, scan the registers yourself and help expand the project.
+If you have a Newntide-based heat pump from a different brand and can confirm compatibility, please [open an issue](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues) so we can add it to the list. Or if you have the means, scan the registers yourself and help expand the project.
 
 ## Table of contents
 
@@ -88,7 +93,7 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 
 1. Open **HACS** in Home Assistant
 2. Click the three-dot menu → **Custom repositories**
-3. Add `https://github.com/RSloot2000/BataviaHeat-R290-Modbus` and select **Integration**
+3. Add `https://github.com/RSloot2000/BataviaHeat-Heat-Pump` and select **Integration**
 4. Click **Download**
 5. Restart Home Assistant
 
@@ -384,7 +389,7 @@ The [`docs/`](docs/) folder contains reference documentation for the BataviaHeat
 
 This integration was built by reverse-engineering the Modbus protocol. Contributions are welcome:
 
-1. Use the [Modbus snooper tools](https://github.com/RSloot2000/BataviaHeat-R290-Modbus/tree/main/tools) to scan your heat pump
+1. Use the [Modbus snooper tools](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/tree/main/tools) to scan your heat pump
 2. Share discovered register definitions
 3. Report issues with register values or entity behaviour
 4. Suggest new features or improvements
