@@ -4,7 +4,14 @@
 
 > **🚧 This project is in early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
 
-Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via DR164 gateway (Modbus TCP), ESP32 proxy (Modbus TCP) or RTU (Serial).
+Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump. Supports four connection types:
+
+- **Cloud** — via your EcoHome app account (no extra hardware, works remotely)
+- **DR164 gateway** — Modbus TCP via RS485-to-WiFi converter (local, fast)
+- **ESP32 proxy** — Modbus TCP via ESP32-S3 proxy (local, fast)
+- **Modbus RTU** — direct USB RS-485 serial connection
+
+Cloud and a local Modbus connection can be combined: cloud acts as primary (setpoints, cloud-only sensors) and Modbus provides faster updates and deeper register access as backup/extension.
 
 ## Compatibility
 
@@ -41,14 +48,20 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 ## Features
 
 - **Climate entity:** on/off, heat/cool/auto modes, target temperature and power-mode preset
-- **22 sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
+- **22 Modbus sensors:** temperatures, pressures, water pump data, operational status, thermal power, energy delivered
 - **6 COP sensors:** built-in coefficient of performance tracking (current, today, week, month, year, all-time) — requires an external kWh meter entity
 - **1 binary sensor:** compressor running
 - **8 select entities:** power mode, auxiliary/external heat source mode, water pump operating & control type, lower-return pump sterilization/timed
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
 - **~20 number entities:** heating curve (stooklijn) parameters, temperature limits, auto-cool/holiday setpoints and water pump tuning
-- **10-second polling interval** via Modbus TCP or RTU (Serial)
-- **Triple connection support:** DR164 WiFi gateway (Modbus TCP), ESP32-S3 proxy (Modbus TCP) or Modbus RTU via USB RS-485 adapter
+- **Cloud connection (EcoHome app account):**
+  - 5 cloud-exclusive sensors: room temperature, compressor speed (rpm), hot water tank temperature, buffer top/bottom temperature
+  - Hot water setpoint (writable, 18–75 °C)
+  - Cloud select entities: silent mode, power mode (writable remotely)
+  - Cloud number entities: cooling setpoint, heating setpoint (zone A/B)
+  - Thermal power and COP calculations use cloud data when Modbus is unavailable
+- **10-second polling** via Modbus TCP or RTU; **30-second polling** via cloud
+- **Cloud + Modbus hybrid mode:** cloud is primary; Modbus provides faster updates and 40+ extra registers. Automatic fallback between the two
 - **Optional register offload:** push raw registers to a NAS/HTTP endpoint or local path for later decoding (disabled by default)
 - **Connection failure resilience:** COP calculations remain accurate after network outages
 
@@ -57,14 +70,15 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 | Component | Description |
 |-----------|-------------|
 | Heat pump | BataviaHeat R290 3–8 kW Monobloc |
+| Cloud account | EcoHome app account (no extra hardware required) |
 | Modbus gateway (TCP) | DR164 RS485-to-WiFi converter (or any Modbus TCP gateway) |
 | ESP32 proxy (TCP) | ESP32-S3 running the BataviaHeat Modbus-TCP proxy firmware |
 | USB adapter (RTU) | Any USB RS-485 adapter (e.g. FTDI, CH340-based) |
-| Wiring | Gateway / adapter connected to the heat pump's RS-485 port (A+ to A+, B− to B−) |
+| Wiring (Modbus only) | Gateway / adapter connected to the heat pump's RS-485 port (A+ to A+, B− to B−) |
 
-> **Choose one connection method:** DR164 gateway (Modbus TCP), ESP32 proxy (Modbus TCP) **or** Modbus RTU (direct USB serial connection to your Home Assistant host).
+> **Choose your primary connection:** Cloud (EcoHome account), DR164 gateway, ESP32 proxy, or Modbus RTU. Cloud and a local Modbus connection can be combined.
 
-> **Important:** The RS-485 bus supports only one master. Disconnect the tablet controller from the bus before using this integration, or use the secondary RS-485 port located on the mainboard of the heatpump.
+> **Important (Modbus only):** The RS-485 bus supports only one master. Disconnect the tablet controller from the bus before using this integration, or use the secondary RS-485 port located on the mainboard of the heat pump.
 
 > **Note:** For a step-by-step guide on wiring the RS-485 to TCP adapter, see [RS-485 adapter installation](#rs-485-adapter-installation) below.
 
@@ -89,7 +103,17 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **BataviaHeat R290**
-3. Select your connection type: **DR164 gateway (Modbus TCP)**, **ESP32 proxy (Modbus TCP)** or **Modbus RTU (Serial)**
+3. Select your primary connection type
+
+### Cloud (EcoHome app account)
+
+4. Enter your **EcoHome app credentials** (the same username and password as the app). Your password is stored as an MD5 hash, never in plaintext.
+5. If multiple devices are on your account, select the correct one.
+6. Optionally **add a local Modbus connection** as backup/extension:
+   - Cloud remains primary (30 s polling)
+   - When the cloud is unreachable, the integration falls back to Modbus automatically
+   - Modbus adds 40+ extra registers (working mode, pump parameters, stooklijn, etc.) at 10 s polling
+   - If you skip this step, the integration runs cloud-only
 
 ### DR164 gateway (Modbus TCP)
 
@@ -137,6 +161,8 @@ Optionally push every register snapshot to a NAS/HTTP endpoint or local director
 
 ### Sensors
 
+#### Modbus sensors
+
 | Entity | Register | Unit | Description |
 |--------|----------|------|-------------|
 | Ambient temperature | IR[22] | °C | Outdoor temperature measured by the heat pump |
@@ -174,6 +200,35 @@ Optionally push every register snapshot to a NAS/HTTP endpoint or local director
 
 > HR[768], HR[773] and HR[776] go to 0 when the compressor is off. This is normal behaviour.
 
+#### Cloud sensors (only when cloud connection is configured)
+
+| Entity | Cloud address | Unit | Description |
+|--------|--------------|------|-------------|
+| Room temperature | 2097 | °C | Room/water temperature as reported by the cloud |
+| Compressor speed | 2072 | rpm | Live compressor speed |
+| Hot water tank temperature | 2100 | °C | DHW storage tank temperature |
+| Buffer top temperature | 2104 | °C | Upper buffer tank sensor |
+| Buffer bottom temperature | 2105 | °C | Lower buffer tank sensor |
+
+When cloud is configured **without** a Modbus backup, the following additional cloud sensors are also created (they duplicate Modbus sensors but use cloud data):
+
+| Entity | Cloud address | Modbus equivalent |
+|--------|--------------|-------------------|
+| Outdoor temperature (cloud) | 2099 | IR[22] |
+| Plate HX inlet (cloud) | 2187 | HR[1348] |
+| Plate HX outlet (cloud) | 2188 | HR[1349] |
+| Total water outlet (cloud) | 2189 | HR[1350] |
+| HP water outlet (cloud) | 2106 | HR[776] |
+| Fin coil temperature (cloud) | 2142 | IR[23] |
+| Discharge temperature (cloud) | 2143 | IR[25] |
+| Suction temperature (cloud) | 2144 | IR[24] |
+| Low pressure (cloud) | 2149 | IR[32] |
+| High pressure (cloud) | 2150 | IR[33] |
+| Pump target speed (cloud) | 2191 | IR[53] |
+| Pump flow rate (cloud) | 2192 | IR[54] |
+| Pump control signal (cloud) | 2193 | IR[66] |
+| Pump feedback signal (cloud) | 2194 | IR[142] |
+
 ### Binary sensors
 
 | Entity | Register | Description |
@@ -192,6 +247,8 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 
 ### Select entities
 
+#### Modbus select entities
+
 | Entity | Register | Options | Description |
 |--------|----------|---------|-------------|
 | Power mode | HR[6465] | Standard, Powerful, Eco, Auto | N01 operating power mode |
@@ -202,7 +259,18 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 | Lower return pump sterilization | HR[7238] | Off, On | P07 |
 | Lower return pump timed | HR[7239] | Off, On | P08 |
 
+#### Cloud select entities (only when cloud connection is configured)
+
+| Entity | Cloud address | Options | Description |
+|--------|--------------|---------|-------------|
+| Silent mode (cloud) | 1004 | Off, On | Enables/disables silent mode via cloud |
+| Power mode (cloud) | 1031 | Standard, Powerful, Eco, Auto | Power mode via cloud |
+
+Cloud selects are always shown when cloud is configured. When Modbus is also configured, the local Modbus variants are preferred for reading; cloud selects provide a remote-write path independent of local connectivity.
+
 ### Number entities
+
+#### Modbus number entities
 
 | Entity | Register | Range | Description |
 |--------|----------|-------|-------------|
@@ -223,17 +291,32 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 | Pump intermittent stop time | HR[6507] | min | P09 |
 | Pump intermittent run time | HR[6511] | min | P20 |
 
+#### Cloud number entities (only when cloud connection is configured)
+
+| Entity | Cloud address | Range | Description |
+|--------|--------------|-------|-------------|
+| Hot water setpoint | 1024 | 18–75 °C | DHW target temperature (always shown) |
+| Cooling setpoint (cloud) | 1022 | 10–35 °C | Cooling target (shown when Modbus not configured) |
+| Heating setpoint (cloud) | 1023 | 20–80 °C | Heating target via cloud (shown when Modbus not configured) |
+| Heating setpoint zone B (cloud) | 1029 | 20–70 °C | Zone B heating target (shown when Modbus not configured) |
+
+The hot water setpoint (cloud address 1024) is always available via cloud — there is no direct Modbus equivalent in the current register map.
+
 The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M], M10+ = HR[6400 + M + 15]. M35–M40 and most P-series live in a separate HR[7184–] / HR[7232–] block (sniffer-confirmed).
 
 ### Climate
 
 | Entity | Description |
 |--------|-------------|
-| Heat Pump | HVAC modes: **Off** / **Heat** / **Cool** / **Auto**, plus power-mode presets (standard/powerful/eco/auto). Current temperature from HR[1350] (T80 total water outlet), target temperature from HR[772] (calculated heating curve setpoint, read-only). When the heating curve is off (M11 = 0), the target temperature can be adjusted via HR[6402] (M02). Working mode via HR[6400]; on/off via coils 1024/1025. |
+| Heat Pump | HVAC modes: **Off** / **Heat** / **Cool** / **Auto**, plus power-mode presets (standard/powerful/eco/auto). Current temperature from HR[1350] (T80 total water outlet), with fallback to cloud addresses 2189/2106 when Modbus is unavailable. Target temperature from HR[772] (calculated heating curve setpoint), with fallback to cloud address 1023. When the heating curve is off (M11 = 0), the target temperature can be adjusted via HR[6402] (M02). Working mode via HR[6400]; on/off via coils 1024/1025. |
+
+> **Cloud-only mode:** when no Modbus connection is configured, the climate entity shows current and target temperature (from cloud data) but HVAC mode and on/off state are unavailable. Use the cloud select entities (`cloud_silent_mode`, `cloud_power_mode`) and number entities (`cloud_heating_setpoint`) in that case.
 
 ## COP calculation
 
-This integration has **built-in COP (Coefficient of Performance) sensors**. Thermal power and energy are calculated from Modbus data (flow rate × ΔT using HR[1348]/HR[1349] water temperatures). Electrical consumption is **not** available from the heat pump itself, it only reports compressor power, not total system consumption. An external kWh meter (e.g. HomeWizard) is required for COP calculation.
+This integration has **built-in COP (Coefficient of Performance) sensors**. Thermal power is calculated from flow rate × ΔT using plate HX water temperatures. The calculation uses **Modbus data first** (IR[54] flow, HR[1348]/HR[1349] temperatures) and **falls back to cloud data** (cloud addresses 2192/2187/2188) when Modbus is unavailable. This means COP tracking works in cloud-only mode too, as long as those cloud sensors are reporting values.
+
+Electrical consumption is **not** available from the heat pump itself. An external kWh meter (e.g. HomeWizard) is required for COP calculation.
 
 ### Setup
 
@@ -263,7 +346,13 @@ Both thermal and electrical energy are accumulated using the same time-gap guard
 
 ## Troubleshooting
 
-### Cannot connect
+### Cannot connect (cloud)
+- Verify your EcoHome app credentials are correct
+- Check that the device appears online in the EcoHome app
+- If the device is shared with you by an installer, it will be discovered automatically via the shared-devices endpoint
+- After 3 consecutive cloud failures the integration falls back to Modbus (if configured) and retries cloud on every subsequent cycle
+
+### Cannot connect (Modbus TCP)
 - Verify the Modbus TCP gateway is powered on and connected to your network
 - Check that the IP address is correct and reachable from your Home Assistant instance
 - Confirm the TCP port (default 502) and slave ID (default 1)
