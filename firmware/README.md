@@ -9,13 +9,11 @@ companion HACS integration connects to this proxy via the **ESP32 proxy** option
 
 - ESP32-S3-DevKitC-1
 - 2× Waveshare TTL ↔ RS485 isolated adapters (auto-direction, no DE/RE)
-- Fail-safe bypass relay (relay off = tablet directly on pump, heating keeps working)
 
 | ESP32 | Adapter | Segment |
 |-------|---------|---------|
-| UART1 GPIO21 TX / GPIO47 RX | board #1 | Tablet |
-| UART2 GPIO13 TX / GPIO14 RX | board #2 | Pump |
-| GPIO10 | — | Fail-safe relay |
+| UART1 GPIO5 TX / GPIO6 RX | board #1 | Tablet |
+| UART2 GPIO8 TX / GPIO9 RX | board #2 | Pump |
 
 Log/upload over the onboard CH343 USB-UART (UART0).
 
